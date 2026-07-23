@@ -12,15 +12,28 @@ Public API::
 from __future__ import annotations
 
 from .parameters import DesignParameters
-from .model import Results, overall_U, report, solve
+from .model import Results, overall_U, report, solve, stream_metrics
+from .masstransfer import (
+    EvaporativeResults,
+    report_evaporative,
+    solve_evaporative,
+    mass_transfer_coeff_from_htc,
+)
 from . import properties
 
 __all__ = [
     "DesignParameters",
+    # boiling / heat-transfer-limited model
     "Results",
     "solve",
     "report",
     "overall_U",
+    "stream_metrics",
+    # evaporative / mass-transfer-limited model
+    "EvaporativeResults",
+    "solve_evaporative",
+    "report_evaporative",
+    "mass_transfer_coeff_from_htc",
     "properties",
 ]
 

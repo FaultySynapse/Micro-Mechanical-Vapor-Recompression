@@ -63,6 +63,28 @@ class DesignParameters:
     #: Additional fouling/scale resistance on the boiling side, m^2 K/W.
     fouling_resistance: float = 0.0001
 
+    # --- Evaporation / condensation surfaces (mass-transfer model) -----------
+    # Used only by the evaporative (sub-boiling, fan-swept) model. In that
+    # regime water evaporates from a free surface and condenses through the
+    # vapor space, so the phase-change *areas* are distinct design variables and
+    # transport can be limited by mass transfer rather than wall heat flow.
+    #: Free liquid-surface area for evaporation, m^2 (defaults to the wall area).
+    evap_area: float = 0.30
+    #: Condensation surface area, m^2 (defaults to the wall area).
+    condenser_area: float = 0.30
+    #: Gas-side mass-transfer coefficient over the evaporator surface, m/s.
+    #: Set by the fan-driven vapor velocity; see
+    #: :func:`mvr.masstransfer.mass_transfer_coeff_from_htc` to derive it from a
+    #: convective heat-transfer coefficient via the Chilton-Colburn analogy.
+    evap_mass_transfer_coeff: float = 0.020
+    #: Gas-side mass-transfer coefficient over the condensation surface, m/s.
+    condenser_mass_transfer_coeff: float = 0.020
+    #: Partial pressure of non-condensable gas (dissolved air/CO2 flashed from
+    #: the greywater) in the vapor space, Pa. Blankets the condenser and throttles
+    #: both evaporation and condensation; a vent/purge keeps it low. 0 recovers
+    #: the pure-vapor, heat-transfer-limited (boiling) result.
+    noncondensable_pressure: float = 500.0
+
     # --- Feed heat exchanger (economizer) ------------------------------------
     #: Effectiveness of the feed pre-heater recovering heat from the hot
     #: distillate and concentrate streams, 0-1.
@@ -100,6 +122,11 @@ class DesignParameters:
             "fouling_resistance": self.fouling_resistance >= 0,
             "insulation_ua": self.insulation_ua >= 0,
             "boiling_point_elevation": self.boiling_point_elevation >= 0,
+            "evap_area": self.evap_area > 0,
+            "condenser_area": self.condenser_area > 0,
+            "evap_mass_transfer_coeff": self.evap_mass_transfer_coeff > 0,
+            "condenser_mass_transfer_coeff": self.condenser_mass_transfer_coeff > 0,
+            "noncondensable_pressure": self.noncondensable_pressure >= 0,
         }
         bad = [name for name, ok in checks.items() if not ok]
         if bad:

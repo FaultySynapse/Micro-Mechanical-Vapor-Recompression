@@ -117,8 +117,92 @@ def _compression_work_specific(p: DesignParameters,
     return isentropic / p.fan_isentropic_efficiency
 
 
+@dataclass
+class StreamMetrics:
+    """Economizer, energy-balance and figure-of-merit results shared by both
+    the boiling and the evaporative models (all SI unless noted)."""
+
+    feed_rate: float
+    concentrate_rate: float
+    feed_preheat_temp_C: float
+    feed_heating_duty: float
+    insulation_loss: float
+    unrecovered_stream_loss: float
+    makeup_heat: float
+    total_energy_input: float
+    distillate_lph: float
+    specific_energy_kwh_per_l: float
+    gain_output_ratio: float
+
+
+def stream_metrics(p: DesignParameters, distillate_rate: float, h_fg: float,
+                   distillate_temp_C: float, concentrate_temp_C: float,
+                   feed_target_temp_C: float, loss_ref_temp_C: float,
+                   shaft_power: float, fan_power: float) -> StreamMetrics:
+    """Feed economizer, whole-unit energy balance, and figures of merit.
+
+    Shared by :func:`solve` (boiling) and the evaporative model so both account
+    for streams and energy identically.  Temperatures name the physical points:
+    the distillate leaves at ``distillate_temp_C`` (condenser), the concentrate
+    at ``concentrate_temp_C`` (evaporator), the feed must be raised to
+    ``feed_target_temp_C``, and shell loss is referenced to ``loss_ref_temp_C``.
+    """
+    feed_rate = distillate_rate / p.recovery_ratio
+    concentrate_rate = feed_rate - distillate_rate
+    cp = props.liquid_cp(loss_ref_temp_C)
+
+    # Economizer: hot products pre-heat the incoming feed.  The effective hot
+    # side is a mass-weighted blend of distillate and concentrate temperatures.
+    hot_inlet_C = (distillate_rate * distillate_temp_C
+                   + concentrate_rate * concentrate_temp_C) / feed_rate
+    feed_preheat_temp_C = (
+        p.feed_temp_C + p.feed_hx_effectiveness * (hot_inlet_C - p.feed_temp_C)
+    )
+    feed_heating_duty = feed_rate * cp * max(feed_target_temp_C - feed_preheat_temp_C, 0.0)
+
+    # Sensible heat still riding out with the products after the economizer.
+    unrecovered = (1.0 - p.feed_hx_effectiveness) * feed_rate * cp * (hot_inlet_C - p.feed_temp_C)
+
+    # Whole-unit energy balance.  All fan shaft work dissipates into the vapor
+    # loop and helps close the balance; motor losses do not enter the fluid.
+    insulation_loss = p.insulation_ua * (loss_ref_temp_C - p.ambient_temp_C)
+    makeup_heat = insulation_loss + unrecovered + feed_heating_duty - shaft_power
+    total_energy_input = fan_power + max(makeup_heat, 0.0)
+
+    rho_product = props.liquid_density(distillate_temp_C)
+    distillate_lph = distillate_rate / rho_product * 1000.0 * 3600.0
+    if distillate_rate > 0 and total_energy_input > 0:
+        # (W / (kg/s)) = J/kg of product; * (kg/L) = J/L; / 3.6e6 = kWh/L.
+        energy_per_kg = total_energy_input / distillate_rate
+        specific_energy_kwh_per_l = energy_per_kg * (rho_product / 1000.0) / 3.6e6
+        gain_output_ratio = distillate_rate * h_fg / total_energy_input
+    else:
+        specific_energy_kwh_per_l = float("inf")
+        gain_output_ratio = 0.0
+
+    return StreamMetrics(
+        feed_rate=feed_rate,
+        concentrate_rate=concentrate_rate,
+        feed_preheat_temp_C=feed_preheat_temp_C,
+        feed_heating_duty=feed_heating_duty,
+        insulation_loss=insulation_loss,
+        unrecovered_stream_loss=unrecovered,
+        makeup_heat=makeup_heat,
+        total_energy_input=total_energy_input,
+        distillate_lph=distillate_lph,
+        specific_energy_kwh_per_l=specific_energy_kwh_per_l,
+        gain_output_ratio=gain_output_ratio,
+    )
+
+
 def solve(p: DesignParameters) -> Results:
-    """Solve the steady-state operating point for a parameter set."""
+    """Solve the steady-state operating point in the *boiling* regime.
+
+    Phase change is assumed heat-transfer-limited: the distillate rate equals
+    the wall heat duty divided by the latent heat.  For a low-temperature,
+    fan-swept *evaporative* unit where mass transfer can bind instead, use
+    :func:`mvr.masstransfer.solve_evaporative`.
+    """
 
     # --- Temperature / pressure stack ----------------------------------------
     t_evap = p.evaporator_temp_C
@@ -141,44 +225,13 @@ def solve(p: DesignParameters) -> Results:
     shaft_power = distillate_rate * w_specific
     fan_power = shaft_power / p.fan_motor_efficiency
 
-    # --- Feed and product streams --------------------------------------------
-    feed_rate = distillate_rate / p.recovery_ratio
-    concentrate_rate = feed_rate - distillate_rate
-    cp = props.liquid_cp(t_evap)
-
-    # Economizer: hot streams enter at ~their chamber temps and pre-heat the
-    # feed.  Distillate carries condenser-side heat, concentrate carries
-    # evaporator-side heat; blend by mass to get the effective hot-side inlet.
-    hot_inlet_C = (distillate_rate * t_cond + concentrate_rate * t_boil) / feed_rate
-    feed_preheat_temp_C = (
-        p.feed_temp_C + p.feed_hx_effectiveness * (hot_inlet_C - p.feed_temp_C)
+    # --- Feed, streams, energy balance, figures of merit (shared helper) ------
+    m = stream_metrics(
+        p, distillate_rate, h_fg,
+        distillate_temp_C=t_cond, concentrate_temp_C=t_boil,
+        feed_target_temp_C=t_boil, loss_ref_temp_C=t_boil,
+        shaft_power=shaft_power, fan_power=fan_power,
     )
-    feed_heating_duty = feed_rate * cp * max(t_boil - feed_preheat_temp_C, 0.0)
-
-    # Sensible heat still riding out with the products after the economizer.
-    unrecovered = (1.0 - p.feed_hx_effectiveness) * feed_rate * cp * (hot_inlet_C - p.feed_temp_C)
-
-    # --- Energy balance over the whole insulated unit ------------------------
-    insulation_loss = p.insulation_ua * (t_boil - p.ambient_temp_C)
-    # All fan shaft work dissipates as heat inside the vapor loop and helps
-    # close the balance; the electrical motor losses do not enter the fluid.
-    makeup_heat = insulation_loss + unrecovered + feed_heating_duty - shaft_power
-
-    # Total electrical-equivalent input: always pay the fan; pay external heat
-    # only when the balance calls for net heating.
-    total_energy_input = fan_power + max(makeup_heat, 0.0)
-
-    # --- Figures of merit ----------------------------------------------------
-    rho_product = props.liquid_density(t_cond)
-    distillate_lph = distillate_rate / rho_product * 1000.0 * 3600.0
-    if distillate_rate > 0 and total_energy_input > 0:
-        # (W / (kg/s)) = J/kg of product; * (kg/L) = J/L; / 3.6e6 = kWh/L.
-        energy_per_kg = total_energy_input / distillate_rate
-        specific_energy_kwh_per_l = energy_per_kg * (rho_product / 1000.0) / 3.6e6
-        gain_output_ratio = distillate_rate * h_fg / total_energy_input
-    else:
-        specific_energy_kwh_per_l = float("inf")
-        gain_output_ratio = 0.0
 
     return Results(
         boiling_temp_C=t_boil,
@@ -189,20 +242,20 @@ def solve(p: DesignParameters) -> Results:
         overall_U=U,
         heat_duty=heat_duty,
         distillate_rate=distillate_rate,
-        distillate_lph=distillate_lph,
+        distillate_lph=m.distillate_lph,
         vapor_volume_flow=vapor_volume_flow,
         compression_work_specific=w_specific,
         fan_power=fan_power,
-        feed_rate=feed_rate,
-        concentrate_rate=concentrate_rate,
-        feed_preheat_temp_C=feed_preheat_temp_C,
-        feed_heating_duty=feed_heating_duty,
-        insulation_loss=insulation_loss,
-        unrecovered_stream_loss=unrecovered,
-        makeup_heat=makeup_heat,
-        total_energy_input=total_energy_input,
-        specific_energy_kwh_per_l=specific_energy_kwh_per_l,
-        gain_output_ratio=gain_output_ratio,
+        feed_rate=m.feed_rate,
+        concentrate_rate=m.concentrate_rate,
+        feed_preheat_temp_C=m.feed_preheat_temp_C,
+        feed_heating_duty=m.feed_heating_duty,
+        insulation_loss=m.insulation_loss,
+        unrecovered_stream_loss=m.unrecovered_stream_loss,
+        makeup_heat=m.makeup_heat,
+        total_energy_input=m.total_energy_input,
+        specific_energy_kwh_per_l=m.specific_energy_kwh_per_l,
+        gain_output_ratio=m.gain_output_ratio,
     )
 
 

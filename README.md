@@ -6,11 +6,27 @@ project is to evaluate candidate designs against physically-grounded performance
 metrics (production rate, energy per liter, gained-output-ratio) and eventually
 to optimize the design parameters.
 
-> **Status:** v0.1 — a first, deliberately transparent steady-state model. The
-> physics is first-principles but uses engineering correlations and a handful of
-> lumped assumptions (documented below). It is a foundation to iterate on, not a
+> **Status:** v0.2 — deliberately transparent steady-state models. The physics is
+> first-principles but uses engineering correlations and a handful of lumped
+> assumptions (documented below). It is a foundation to iterate on, not a
 > validated design tool. Numbers should be read as *relative* guidance for
 > comparing designs, not absolute guarantees.
+
+## Two operating regimes, two models
+
+The still can run in either of two physically distinct regimes, and the toolkit
+provides a model for each:
+
+| Regime | Model | Rate set by | Use when |
+| --- | --- | --- | --- |
+| **Boiling** | `mvr.solve` | wall heat flow, `ṁ = Q/h_fg` | vigorous boiling at a wetted wall |
+| **Evaporative** (sub-boiling, fan-swept) | `mvr.solve_evaporative` | **mass transfer** across the vapor-space gas films, throttled by non-condensable gas | low-temperature unit where water evaporates from a warm free surface and the fan sweeps the vapor across |
+
+The two share the same `DesignParameters`, the same feed-economizer/energy-balance
+bookkeeping, and the same figures of merit. As non-condensable gas → 0 and the
+mass-transfer coefficients get large, the evaporative model **collapses onto the
+boiling result** — they are two ends of one physical picture. For a small,
+low-temperature greywater unit the **evaporative model is the relevant one**.
 
 ## The device
 
@@ -101,6 +117,48 @@ See `mvr/model.py` for the fully-commented equations and `mvr/properties.py` for
 the water/steam correlations (Antoine saturation pressure, Watson latent heat,
 ideal-gas vapor density) with their accuracy ranges.
 
+### The evaporative mass-transfer model
+
+For a sub-boiling, fan-swept unit, production can be limited by how fast vapor
+crosses the gas films at the surfaces rather than by wall heat flow. A single
+mass flow `ṁ` threads a chain of resistances, and the fan supplies the
+compression in the middle:
+
+```
+evaporator liquid surface   p_v = P_sat(T_evap)
+    │  evaporation mass transfer     (gas film, throttled by NCG)
+evaporator bulk vapor       p_v = P_v_evap
+    │  FAN — compresses total pressure by ratio r ⇒ water p_v scales by r
+condenser bulk vapor        p_v = P_v_cond = r · P_v_evap
+    │  condensation mass transfer   (gas film, throttled by NCG)
+condensation surface        p_v = P_sat(T_surf_cond)
+    │  WALL — latent heat conducts back:  ṁ·h_fg = U·A·(T_surf_cond − T_evap)
+evaporator liquid           T_evap
+```
+
+Each mass-transfer step uses the **stagnant-film (Stefan-flow)** law
+
+```
+ṁ = h_m · A · (P_tot / (R_v·T)) · ln[(P_tot − p_v,sink) / (P_tot − p_v,source)]
+```
+
+which stiffens as non-condensable gas (NCG) → 0 (the log term diverges, the film
+resistance vanishes) so the model reduces to the heat-transfer-limited boiling
+case. The coupled steady state is found by a single robust root-find on `ṁ`.
+
+**Non-condensable gas** — dissolved air and CO₂ flashed out of the greywater —
+is a first-class effect here (`noncondensable_pressure`). It blankets the
+condenser and throttles both surfaces, which is why real units need a vent/purge.
+
+**Lift budget.** The result partitions the nominal compression lift into the
+parts spent on NCG dilution, evaporation mass transfer, condensation mass
+transfer, and the *useful* wall ΔT — so you can see exactly which resistance is
+eating your compression work. Example (50 °C, 6 K lift, 1 kPa NCG): only ~1.4 K
+of the 6 K lift reaches the wall; condensation across the NCG-blanketed film eats
+~2.7 K, and production is ~24 % of the naive heat-transfer limit.
+
+See `mvr/masstransfer.py` for the fully-commented derivation.
+
 ## Design parameters
 
 Every knob lives in `mvr/parameters.py` (`DesignParameters`), grouped by the
@@ -126,9 +184,17 @@ python -m mvr.cli --temp-lift 3 --hx-area 0.5 --feed-hx-effectiveness 0.9
 # scan one parameter and print a table
 python -m mvr.cli --sweep temp_lift 1 12 12
 
-# worked example: baseline + optimized temperature lift
-python examples/baseline.py
+# EVAPORATIVE model: low-temperature, fan-swept, mass-transfer-limited unit
+python -m mvr.cli --model evaporative --evaporator-temp-C 50 --temp-lift 6
+python -m mvr.cli --model evaporative --sweep noncondensable_pressure 100 5000 8
+
+# worked examples
+python examples/baseline.py        # boiling: baseline + optimized lift
+python examples/evaporative.py     # evaporative: lift budget + NCG purge sweep
 ```
+
+Flags mirror the `DesignParameters` field names (underscores → dashes, keeping
+case, e.g. `--evaporator-temp-C`, `--noncondensable-pressure`).
 
 Optional plotting (needs `matplotlib`):
 
@@ -168,28 +234,36 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite covers property correlations against reference steam-table values, and
-model invariants: mass balance, energy-balance closure, `Q = ṁ·h_fg`,
-series-resistance bounds on `U`, and the expected monotonic responses (more lift
-→ more production but more fan power per kg; better insulation/economizer → less
-energy).
+The suite (38 tests) covers property correlations against reference steam-table
+values and model invariants for **both** models: mass balance, energy-balance
+closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
+partition, that the evaporative model never beats the heat limit and **reduces
+to the boiling model as NCG → 0**, and expected monotonic responses (more lift →
+more production but more fan power per kg; better insulation/economizer → less
+energy; more NCG / slower mass transfer → less production).
 
-## Modeling assumptions & limitations (v0.1)
+## Modeling assumptions & limitations (v0.2)
 
 - **Steady state only** — no transient start-up, thermal mass, or level control.
 - **Lumped temperatures** — each chamber is a single temperature; no spatial
   gradients along the plate, no boiling/condensing regime maps. `U` is a design
   input built from constant film coefficients, not computed from flow/geometry.
 - **Ideal-gas vapor**, single isentropic-exponent compression model.
+- **Mass transfer** uses a stagnant-film (Stefan-flow) law with a lumped
+  coefficient and a linear-in-flux form (no high-flux/interfacial-kinetic
+  corrections); NCG is a single specified partial pressure, uniform per chamber,
+  and its parasitic recirculation through the fan is neglected.
 - **Economizer** modeled by a single effectiveness `ε`; the hot side is a
   mass-weighted blend of distillate and concentrate.
 - **BPE** is a fixed input, not computed from greywater composition/recovery.
 - **Makeup heat** is counted as full electrical-equivalent input; a real unit
   might source it from low-grade/waste heat, which would lower reported kWh/L.
 
-These are the natural places to deepen the model next (e.g. compute `U` from
-plate geometry and boiling/condensation correlations, add concentration-
-dependent BPE, add a transient tank model, add capital-cost objectives).
+Natural places to deepen the model next: compute `U` and the mass-transfer
+coefficients from real plate geometry and flow (boiling/condensation and
+Sherwood correlations), model the NCG vent/purge flow and its parasitic load,
+add concentration-dependent BPE, add a transient tank model, and add
+capital-cost objectives.
 
 ## Project layout
 
@@ -197,14 +271,16 @@ dependent BPE, add a transient tank model, add capital-cost objectives).
 mvr/
   properties.py   water/steam thermophysical correlations (pure stdlib)
   parameters.py   DesignParameters dataclass + validation
-  model.py        steady-state solver, Results, text report
+  model.py        boiling (heat-limited) solver + shared stream/energy helper
+  masstransfer.py evaporative (mass-transfer-limited) coupled solver
   optimize.py     golden-section + grid-search optimizers
-  cli.py          `python -m mvr.cli` entry point + parameter sweep
+  cli.py          `python -m mvr.cli` entry point (--model, --sweep)
 examples/
-  baseline.py     baseline report + optimized lift
+  baseline.py     boiling: baseline report + optimized lift
+  evaporative.py  evaporative: lift budget + NCG purge sweep
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
-tests/            pytest suite
+tests/            pytest suite (38 tests)
 ```
 
 ## License
