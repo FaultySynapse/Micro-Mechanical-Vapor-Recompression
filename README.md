@@ -335,6 +335,31 @@ wall-heat-limited above:
 | flow (L/h) | 7.8 | 9.3 | 10.7 | **12.2** | 12.9 |
 | kWh/m³ | 77 | 65 | 56 | **49** | 47 |
 
+### What binds — sensitivity analysis
+
+`flow_sensitivity` returns the elasticity of budget-constrained flow to each
+parameter (`d ln flow / d ln param`), so you can see where extra hardware pays
+off. At the 80 °C / 600 W optimum the design is **balanced**: every surface has a
+similar, moderate elasticity (~0.16) and none dominates, while **wall
+conductivity is ~0** (material choice is irrelevant for a flat divider).
+Increasing all surfaces *together* (a bigger/denser plate) is the real lever
+(~0.5 combined); a tighter channel gap also helps (higher sweep velocity).
+
+### Non-condensable gas: load and purge (`mvr.ncg`)
+
+Air-saturated greywater carries ~0.8 mmol/L of dissolved gas (CO₂-rich water
+several times that); it flashes out under vacuum and must be purged. `mvr.ncg`
+estimates the **load** from the feed and the **purge cost** — the water vapor
+lost to hold a target NCG partial pressure (the bled gas is mostly steam), plus
+a rough purge-pump power. `python scripts/ncg_sensitivity.py` plots it.
+
+The purge target should track the operating regime. At 80 °C (wall-heat limited)
+net flow peaks near **P_ncg ≈ 200 Pa**; purging cleaner barely lifts gross flow
+(condensation isn't the bottleneck) while water loss and pump power climb. At
+lower temperature (condensation limited) deeper purging genuinely buys flow. A
+vent placed at the coldest, NCG-richest corner loses far less water than the
+bulk-composition estimate.
+
 ## Tests
 
 ```bash
@@ -342,7 +367,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (55 tests) covers property correlations against reference steam-table
+The suite (62 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -387,6 +412,7 @@ capital-cost objectives.
 mvr/
   properties.py   water/steam thermophysical correlations (pure stdlib)
   transport.py    gas transport properties + flat-plate transfer correlations
+  ncg.py          non-condensable-gas load from feed + purge cost model
   parameters.py   DesignParameters dataclass + validation
   model.py        boiling (heat-limited) solver + shared stream/energy helper
   masstransfer.py evaporative (mass-transfer-limited) coupled solver
@@ -398,7 +424,8 @@ examples/
   optimize_600W.py  maximize flow for a 600 W power budget
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
-tests/            pytest suite (55 tests)
+  ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
+tests/            pytest suite (62 tests)
 ```
 
 ## License

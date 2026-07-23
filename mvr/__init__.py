@@ -16,6 +16,8 @@ from .model import Results, overall_U, report, solve, stream_metrics
 from .optimize import (
     maximize_flow,
     fan_flow_for_power_budget,
+    budget_constrained_flow,
+    flow_sensitivity,
     WALL_MATERIALS,
     DEFAULT_BOUNDS,
 )
@@ -28,6 +30,7 @@ from .masstransfer import (
 )
 from . import properties
 from . import transport
+from . import ncg
 
 __all__ = [
     "DesignParameters",
@@ -46,10 +49,13 @@ __all__ = [
     # design optimization
     "maximize_flow",
     "fan_flow_for_power_budget",
+    "budget_constrained_flow",
+    "flow_sensitivity",
     "WALL_MATERIALS",
     "DEFAULT_BOUNDS",
     "properties",
     "transport",
+    "ncg",
 ]
 
 __version__ = "0.1.0"

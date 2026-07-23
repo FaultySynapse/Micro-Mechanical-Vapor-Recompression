@@ -282,3 +282,30 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
         "budget_w": budget_w,
     }
     return best_params, best_result, info
+
+
+def budget_constrained_flow(base: DesignParameters, budget_w: float) -> float:
+    """Distillate flow (L/h) with the fan flow set to spend ``budget_w``."""
+    from .masstransfer import solve_evaporative
+    vf = fan_flow_for_power_budget(base, budget_w)
+    return solve_evaporative(replace(base, fan_volumetric_flow=vf,
+                                     transfer_from_flow=True)).distillate_lph
+
+
+def flow_sensitivity(base: DesignParameters, param_names, budget_w: float = 600.0,
+                     rel: float = 0.1) -> dict:
+    """Elasticity of budget-constrained flow to each parameter.
+
+    Returns ``{name: d ln(flow) / d ln(param)}`` by central difference at fixed
+    power budget (the fan flow is re-set to the budget at every perturbation).
+    An elasticity of 1.0 means "10 % more of this gives 10 % more flow"; the
+    ranking says where extra geometry/hardware actually pays off.
+    """
+    f0 = budget_constrained_flow(base, budget_w)
+    out = {}
+    for name in param_names:
+        v = getattr(base, name)
+        up = budget_constrained_flow(replace(base, **{name: v * (1 + rel)}), budget_w)
+        dn = budget_constrained_flow(replace(base, **{name: v * (1 - rel)}), budget_w)
+        out[name] = (up - dn) / (2.0 * rel * f0) if f0 > 0 else 0.0
+    return out
