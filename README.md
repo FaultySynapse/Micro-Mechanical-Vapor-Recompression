@@ -373,22 +373,28 @@ efficient turbomachine regime. The achievable *overall* efficiency (~0.48)
 corresponds to ~0.55 aerodynamic × ~0.85 motor, so it **validates** the model's
 default fan efficiencies rather than contradicting them.
 
-**Broad operating band (`BlowerCurve`).** A selected blower isn't a single
-point: `BlowerCurve` gives a broad-plateau efficiency hump and a falling
-head–flow curve, and `at_speed()` scales it by the affinity laws (Q ∝ N,
-Δp ∝ N², efficiency preserved). One blower sized to the 600 W duty, under speed
-control, spans a wide band at *constant* efficiency
-(`python examples/blower_band.py`):
+**The fan curve and power set flow and lift.** Flow and compression lift are not
+independent inputs — the blower couples them, and the power (speed) picks the
+point. `BlowerCurve` gives a broad-plateau efficiency hump and a falling
+head–flow curve; `at_speed()` scales it by the affinity laws (Q ∝ N, Δp ∝ N²,
+efficiency preserved, so P ∝ N³). `solve_at_power(design, blower, watts)` makes
+**power and the blower the true parameters** and returns flow, lift and
+production as *outputs* (`python examples/blower_band.py`):
 
-| speed | 60 % | 75 % | 100 % | 110 % | 125 % |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| flow (L/h) | 6.5 | 8.9 | **12.5** | 13.8 | 15.7 |
-| fan (W) | 149 | 277 | **605** | 779 | 1087 |
+| power (W) | 200 | 400 | **600** | 800 |
+| --- | ---: | ---: | ---: | ---: |
+| speed | 66 % | 83 % | **95 %** | 104 % |
+| flow (L/s) | 7.7 | 9.7 | **11.1** | 12.2 |
+| lift (K) | 5.8 | 8.8 | **11.1** | 13.0 |
+| flow (L/h) | 7.4 | 10.0 | **11.8** | 13.1 |
 
-So the design has generous turndown and headroom (≈6.5–15.7 L/h from one
-machine) rather than a narrow band; the 600 W target sits at ~100 % speed.
-`operating_point()` also settles a fixed-speed blower against a varying system
-resistance (feed swings, fouling).
+Because best-efficiency power scales as speed³, the power→speed map is
+closed-form; flow (∝ speed) and lift (from Δp ∝ speed²) then follow from the
+curve. The reported `delivery_ratio` ≈ 1.0 confirms the design runs essentially
+**single-pass** (the blower delivers just the vapor that condenses). One machine
+under speed control spans generous turndown and headroom at *constant*
+efficiency; `operating_point()` also settles a fixed-speed blower against a
+varying system resistance (feed swings, fouling).
 
 ## Tests
 
@@ -397,7 +403,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (74 tests) covers property correlations against reference steam-table
+The suite (80 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -457,7 +463,7 @@ examples/
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (74 tests)
+tests/            pytest suite (80 tests)
 ```
 
 ## License

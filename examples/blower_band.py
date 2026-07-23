@@ -12,20 +12,12 @@ varying system resistance.
 
 import os
 import sys
-from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mvr import DesignParameters, maximize_flow, fan
 from mvr import properties as props
-from mvr.masstransfer import solve_evaporative
-
-
-def lift_for_pressure(dp_pa: float, t_evap_C: float, p_ncg: float) -> float:
-    """Compression lift (K) whose pressure rise equals ``dp_pa``."""
-    p_sat = props.sat_pressure(t_evap_C)
-    ratio = 1.0 + dp_pa / (p_sat + p_ncg)
-    return props.sat_temperature(ratio * p_sat) - t_evap_C
+from mvr.masstransfer import solve_at_power, solve_at_speed
 
 
 def main() -> None:
@@ -47,17 +39,26 @@ def main() -> None:
     print(f"  fixed-speed range      shut-off {blower.pressure(0)/1000:.1f} kPa,"
           f" free delivery {blower.max_flow*1000:.1f} L/s")
     print()
-    print("Operating band by speed control (efficiency preserved by affinity):")
-    print(f"  {'speed %':>7} | {'Q L/s':>6} | {'dp kPa':>6} | {'lift K':>6} | "
-          f"{'eff':>5} | {'L/h':>6} | {'fan W':>6}")
-    for n in (0.6, 0.75, 0.9, 1.0, 1.1, 1.25):
-        b = blower.at_speed(n)
-        q, dp = b.design_flow, b.design_pressure
-        lift = lift_for_pressure(dp, t, design.noncondensable_pressure)
-        r = solve_evaporative(replace(design, temp_lift=lift, fan_volumetric_flow=q))
-        tag = "  <- 600 W design" if abs(n - 1.0) < 1e-9 else ""
-        print(f"  {n*100:7.0f} | {q*1000:6.2f} | {dp/1000:6.1f} | {lift:6.2f} | "
-              f"{b.efficiency(q):5.2f} | {r.distillate_lph:6.2f} | {r.fan_power:6.0f}{tag}")
+
+    # POWER is the true input; flow and lift come out of the fan curve.
+    print("Flow & lift as OUTPUTS of the fan curve, selected by power:")
+    print(f"  {'power W':>7} | {'speed %':>7} | {'Q L/s':>6} | {'lift K':>6} | "
+          f"{'eff':>5} | {'L/h':>6} | {'deliv/prod':>10}")
+    for power in (200.0, 400.0, 600.0, 800.0):
+        r, op = solve_at_power(design, blower, power)
+        tag = "  <- 600 W target" if power == 600.0 else ""
+        print(f"  {power:7.0f} | {op['speed_ratio']*100:7.0f} | {op['flow_m3s']*1000:6.2f} | "
+              f"{op['lift_K']:6.2f} | {op['efficiency']:5.2f} | {r.distillate_lph:6.2f} | "
+              f"{op['delivery_ratio']:10.2f}{tag}")
+    print()
+
+    # The same picture by speed (affinity preserves efficiency across the band).
+    print("Operating band by speed control:")
+    print(f"  {'speed %':>7} | {'Q L/s':>6} | {'lift K':>6} | {'L/h':>6} | {'blower W':>8}")
+    for n in (0.6, 0.8, 1.0, 1.2):
+        r, op = solve_at_speed(design, blower, n)
+        print(f"  {n*100:7.0f} | {op['flow_m3s']*1000:6.2f} | {op['lift_K']:6.2f} | "
+              f"{r.distillate_lph:6.2f} | {op['blower_power_w']:8.0f}")
 
 
 if __name__ == "__main__":

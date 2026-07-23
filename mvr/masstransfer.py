@@ -38,7 +38,7 @@ keeps the same intuitive meaning as in the boiling model.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import properties as props
 from . import transport
@@ -477,3 +477,70 @@ def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
         "=" * 64,
     ]
     return "\n".join(lines)
+
+
+# --- Blower-coupled operating point ------------------------------------------
+#
+# The fan curve, not the designer, sets the flow<->lift relation: at a given
+# speed the blower delivers a flow and a pressure rise (-> compression lift), and
+# the *power* selects the speed.  So the true parameters are the blower and the
+# power; flow, lift and production are outputs.
+
+
+def lift_from_compression_pressure(dp_pa: float, t_evap_C: float,
+                                   p_ncg: float) -> float:
+    """Compression lift (K) whose evaporator->condenser pressure rise is ``dp_pa``."""
+    if dp_pa <= 0.0:
+        return 0.0
+    p_sat = props.sat_pressure(t_evap_C)
+    ratio = 1.0 + dp_pa / (p_sat + p_ncg)
+    return max(props.sat_temperature(ratio * p_sat) - t_evap_C, 0.0)
+
+
+def solve_at_speed(p: DesignParameters, blower, speed_ratio: float,
+                   duct_loss_coeff: float = 0.0):
+    """Solve the operating point for a blower run at ``speed_ratio`` × design speed.
+
+    The blower (any object exposing ``at_speed``, ``design_flow``,
+    ``design_pressure``, ``efficiency`` and ``power``) delivers a best-efficiency
+    flow ``Q`` and pressure rise; the pressure sets the compression lift and the
+    flow sets the sweep.  Returns ``(EvaporativeResults, operating_point)`` where
+    the operating point carries the blower flow, compression pressure, lift,
+    efficiency, blower electrical power, and the delivery/production ratio (≈1 =
+    single-pass, >1 = the blower over-delivers and vapor recirculates).
+    """
+    b = blower.at_speed(speed_ratio)
+    flow = b.design_flow
+    compression_pa = b.design_pressure - duct_loss_coeff * flow * flow
+    lift = lift_from_compression_pressure(compression_pa, p.evaporator_temp_C,
+                                          p.noncondensable_pressure)
+    result = solve_evaporative(replace(p, fan_volumetric_flow=flow,
+                                       temp_lift=max(lift, 0.05),
+                                       transfer_from_flow=True))
+    rho_sat = props.vapor_density(p.evaporator_temp_C,
+                                  props.sat_pressure(p.evaporator_temp_C))
+    delivery_ratio = (rho_sat * flow / result.distillate_rate
+                      if result.distillate_rate > 0 else float("inf"))
+    op = {
+        "speed_ratio": speed_ratio,
+        "flow_m3s": flow,
+        "compression_pa": compression_pa,
+        "lift_K": lift,
+        "efficiency": b.efficiency(flow),
+        "blower_power_w": b.power(flow),
+        "delivery_ratio": delivery_ratio,
+    }
+    return result, op
+
+
+def solve_at_power(p: DesignParameters, blower, power_w: float,
+                   duct_loss_coeff: float = 0.0):
+    """Solve the operating point for a blower drawing ``power_w`` electrical.
+
+    Best-efficiency power scales as speed^3, so the required speed follows in
+    closed form; flow, lift and production then come from :func:`solve_at_speed`.
+    Makes power (and the blower) the true parameters.
+    """
+    base_power = blower.design_flow * blower.design_pressure / blower.peak_efficiency
+    speed_ratio = (power_w / base_power) ** (1.0 / 3.0) if base_power > 0 else 1.0
+    return solve_at_speed(p, blower, speed_ratio, duct_loss_coeff)

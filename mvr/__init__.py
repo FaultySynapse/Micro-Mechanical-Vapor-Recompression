@@ -25,6 +25,9 @@ from .masstransfer import (
     EvaporativeResults,
     report_evaporative,
     solve_evaporative,
+    solve_at_speed,
+    solve_at_power,
+    lift_from_compression_pressure,
     mass_transfer_coeff_from_htc,
     htc_from_mass_transfer_coeff,
 )
@@ -44,6 +47,9 @@ __all__ = [
     # evaporative / mass-transfer-limited model
     "EvaporativeResults",
     "solve_evaporative",
+    "solve_at_speed",
+    "solve_at_power",
+    "lift_from_compression_pressure",
     "report_evaporative",
     "mass_transfer_coeff_from_htc",
     "htc_from_mass_transfer_coeff",
