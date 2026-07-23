@@ -85,7 +85,7 @@ def sat_temperature(pressure_pa: float) -> float:
     if pressure_pa <= 0.0:
         raise ValueError("pressure must be positive")
     lo, hi = 1.0, 250.0
-    for _ in range(200):
+    for _ in range(60):
         mid = 0.5 * (lo + hi)
         if sat_pressure(mid) < pressure_pa:
             lo = mid

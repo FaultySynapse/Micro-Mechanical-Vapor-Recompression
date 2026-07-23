@@ -13,6 +13,12 @@ from __future__ import annotations
 
 from .parameters import DesignParameters
 from .model import Results, overall_U, report, solve, stream_metrics
+from .optimize import (
+    maximize_flow,
+    fan_flow_for_power_budget,
+    WALL_MATERIALS,
+    DEFAULT_BOUNDS,
+)
 from .masstransfer import (
     EvaporativeResults,
     report_evaporative,
@@ -37,6 +43,11 @@ __all__ = [
     "report_evaporative",
     "mass_transfer_coeff_from_htc",
     "htc_from_mass_transfer_coeff",
+    # design optimization
+    "maximize_flow",
+    "fan_flow_for_power_budget",
+    "WALL_MATERIALS",
+    "DEFAULT_BOUNDS",
     "properties",
     "transport",
 ]

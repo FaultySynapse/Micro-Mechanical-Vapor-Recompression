@@ -286,6 +286,44 @@ best, value = grid_search(base, {
 Objectives are plain `(DesignParameters) -> float` callables (smaller is better),
 so you can encode any trade-off you like — energy, production, a capital proxy.
 
+### Maximize flow for a power budget (the headline design problem)
+
+The general design goal is **maximum distillate flow for a fixed power budget
+(fan + auxiliary heating), within size and material limits.** `maximize_flow`
+solves exactly that:
+
+```python
+from mvr import DesignParameters, maximize_flow
+
+base = DesignParameters(noncondensable_pressure=500.0, feed_hx_effectiveness=0.85)
+params, result, info = maximize_flow(base, budget_w=600.0)   # ~15 s
+print(info["material"], round(result.distillate_lph, 1), "L/h")
+```
+
+It searches the design variables (plate area, temperature lift, operating
+temperature, channel gap/length, insulation, and wall material) with a
+derivative-free pattern search; at every trial the fan flow is set — by
+false-position on the near-linear power curve — so the design spends *exactly*
+the budget. Bounds and the material list are overridable
+(`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run `python examples/optimize_600W.py`.
+
+For the default small unit at **600 W** the optimizer lands on ~**13 L/h**, and
+the design tells a clear story:
+
+- **Spend the budget on the fan, not the heater.** The optimum runs the fan hard
+  enough that its dissipated work covers the losses (makeup heat goes *negative*,
+  ~−190 W surplus), so auxiliary heating adds nothing to flow — it only ever
+  covers unavoidable losses. Keep losses low and drive the fan.
+- **Size limits bind.** Plate area maxes out, the channel gap goes to its minimum
+  (tighter gap → faster sweep → thinner film), and the operating temperature
+  runs to its ceiling. If you can build it bigger/hotter, you get more flow.
+- **Material barely matters.** Stainless (12.9 L/h) trails copper (13.2 L/h) by
+  ~2 % despite 24× lower conductivity — the wall resistance is tiny next to the
+  gas/film resistances — so the durable, non-corroding choice is essentially free.
+- **Flow scales sub-linearly with power** (~300 W → 9.5, 600 → 12.9, 900 →
+  14.9 L/h): doubling the budget buys only ~35 % more flow, because production
+  rises roughly as `√(fan power)`.
+
 ## Tests
 
 ```bash
@@ -293,7 +331,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (49 tests) covers property correlations against reference steam-table
+The suite (55 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -345,10 +383,11 @@ mvr/
   cli.py          `python -m mvr.cli` entry point (--model, --sweep)
 examples/
   baseline.py     boiling: baseline report + optimized lift
-  evaporative.py  evaporative: lift budget + NCG purge sweep
+  evaporative.py  evaporative: lift budget + NCG purge + fan-flow sweep
+  optimize_600W.py  maximize flow for a 600 W power budget
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
-tests/            pytest suite (49 tests)
+tests/            pytest suite (55 tests)
 ```
 
 ## License

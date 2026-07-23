@@ -174,7 +174,7 @@ def _invert_evaporation(p: DesignParameters, m_dot: float,
     if flow(0.0) <= m_dot:
         return 0.0                      # evaporation saturated: cannot go faster
     lo, hi = 0.0, p_surf
-    for _ in range(80):
+    for _ in range(45):
         mid = 0.5 * (lo + hi)
         if flow(mid) > m_dot:
             lo = mid
@@ -198,7 +198,7 @@ def _invert_condensation(p: DesignParameters, m_dot: float,
 
     # flow increases as the bulk pressure rises above the surface value.
     lo, hi = p_surf, p_cond_tot
-    for _ in range(80):
+    for _ in range(45):
         mid = 0.5 * (lo + hi)
         if flow(mid) < m_dot:
             lo = mid
@@ -305,7 +305,7 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
 
     # residual(0) < 0 and residual(m_dot_max) > 0 -> unique bracketed root.
     lo, hi = 0.0, m_dot_max
-    for _ in range(100):
+    for _ in range(55):
         mid = 0.5 * (lo + hi)
         if residual(mid) < 0.0:
             lo = mid
