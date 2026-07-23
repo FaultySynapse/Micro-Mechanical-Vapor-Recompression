@@ -39,10 +39,12 @@ def test_solve_at_power_draws_the_requested_power():
 def test_flow_and_lift_are_outputs_of_the_curve():
     p, blower = _design_and_blower()
     r, op = solve_at_speed(p, blower, 1.0)
-    # At design speed the blower sits at its BEP flow and design pressure.
+    # At design speed the blower sits at its BEP flow and design pressure; the
+    # lift is driven by the head remaining after the duct drop.
     assert op["flow_m3s"] == pytest.approx(blower.design_flow, rel=1e-9)
     expected_lift = lift_from_compression_pressure(
-        blower.design_pressure, p.evaporator_temp_C, p.noncondensable_pressure)
+        blower.design_pressure - p.duct_pressure_drop_pa,
+        p.evaporator_temp_C, p.noncondensable_pressure)
     assert op["lift_K"] == pytest.approx(expected_lift, rel=1e-9)
 
 
@@ -69,3 +71,12 @@ def test_speed_power_cubic_relation():
     _, op1 = solve_at_speed(p, blower, 1.0)
     _, op2 = solve_at_speed(p, blower, 2.0)
     assert op2["blower_power_w"] == pytest.approx(8 * op1["blower_power_w"], rel=1e-6)
+
+
+def test_model_fan_power_matches_blower_draw():
+    # Consolidation guarantee: the evaporative model's Q·Δp/η fan power equals the
+    # blower curve's power for the same operating point (one power basis).
+    p, blower = _design_and_blower()
+    for speed in (0.7, 1.0, 1.3):
+        r, op = solve_at_speed(p, blower, speed)
+        assert r.fan_power == pytest.approx(op["blower_power_w"], rel=0.01)

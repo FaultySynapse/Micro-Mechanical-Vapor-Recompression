@@ -95,9 +95,11 @@ Q     = U · A · lift
 ```
 
 **Compression.** The fan raises the vapor from `P_sat(T_evap)` to
-`P_sat(T_cond)` (plus duct losses). Work is modeled as ideal-gas isentropic
-compression divided by fan efficiency — for these small pressure ratios it is
-within a few percent of the incompressible estimate `ΔP / ρ_vapor`.
+`P_sat(T_cond)` (plus duct losses). Fan power is modeled on a single **fan-curve
+basis** — air power `Q·ΔP` over the aerodynamic and motor efficiencies (per unit
+mass, `ΔP/ρ_vapor / η`) — the same `Q·ΔP/η` the blower and optimizer use, so
+`fan_power`, GOR and specific energy are all on one consistent basis across every
+regime.
 
 **Energy balance (whole insulated unit, steady state).** All fan shaft work
 dissipates into the vapor loop and helps close the balance:
@@ -310,8 +312,8 @@ overridable (`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run
 `python examples/optimize_600W.py`.
 
 The default bounds keep the **cold-side temperature below 80 °C**; at **600 W**
-the optimizer lands on ~**11.5 L/h** (~11.8 with copper), with the blower drawing
-the full budget at a derived ~10.6 K lift. The design tells a clear story:
+the optimizer lands on ~**11.3 L/h** (~11.6 with copper), with the blower drawing
+the full budget at a derived ~10.5 K lift. The design tells a clear story:
 
 - **Spend the budget on the fan, not the heater.** The optimum runs the fan hard
   enough that its dissipated work covers the losses (makeup heat goes *negative*,
@@ -323,20 +325,20 @@ the full budget at a derived ~10.6 K lift. The design tells a clear story:
 - **Material barely matters.** Stainless trails copper by ~2 % despite 24× lower
   conductivity — the wall resistance is tiny next to the gas/film resistances —
   so the durable, non-corroding choice is essentially free.
-- **Flow scales sub-linearly with power** (~300 W → 8.7, 600 → 11.5, 900 →
-  13.4 L/h): doubling the budget buys only ~35 % more flow, because production
+- **Flow scales sub-linearly with power** (~300 W → 8.6, 600 → 11.3, 900 →
+  13.2 L/h): doubling the budget buys only ~35 % more flow, because production
   rises roughly as `√(fan power)`.
 
 **Cold-side temperature trade-off.** Capping `T_cold` at 80 °C is a *soft*
 compromise — it keeps ~95 % of the flow/efficiency of an 85 °C design. Below
-that the cost is gradual and roughly linear (~0.14 L/h and ~0.9 kWh/m³ per °C),
+that the cost is gradual and roughly linear (~0.14 L/h and ~1 kWh/m³ per °C),
 and the bottleneck flips from condensation-limited (below ~65 °C) to
 wall-heat-limited above:
 
 | T_cold (°C) | 50 | 60 | 70 | **80** | 85 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| flow (L/h) | 7.3 | 8.7 | 10.1 | **11.5** | 12.2 |
-| kWh/m³ | 72 | 60 | 52 | **46** | 43 |
+| flow (L/h) | 7.1 | 8.5 | 9.9 | **11.3** | 12.0 |
+| kWh/m³ | 84 | 70 | 60 | **53** | 50 |
 
 ### What binds — sensitivity analysis
 
@@ -406,7 +408,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (80 tests) covers property correlations against reference steam-table
+The suite (81 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -466,7 +468,7 @@ examples/
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (80 tests)
+tests/            pytest suite (81 tests)
 ```
 
 ## License

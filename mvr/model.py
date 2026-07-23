@@ -102,19 +102,15 @@ def _compression_work_specific(p: DesignParameters,
                                t_evap_C: float) -> float:
     """Shaft compression work per kg of vapor, J/kg.
 
-    Ideal-gas isentropic compression from ``p_evap`` to ``p_cond`` (with the
-    extra duct pressure drop stacked on the discharge), divided by the fan's
-    isentropic efficiency.  For the small pressure ratios of an MVR still this
-    is very close to the incompressible estimate ``dP / rho_vapor``.
+    Fan-curve basis: the ideal "air" work per unit volume is the pressure rise
+    ``dP`` (including the duct drop on the discharge); per unit mass that is
+    ``dP / rho_vapor``, and dividing by the aerodynamic efficiency gives the
+    shaft work.  This is the same ``Q·dP/eta`` model the evaporative and blower
+    paths use, so every regime reports fan power on one consistent basis.
     """
-    p_discharge = p_cond + p.duct_pressure_drop_pa
-    exponent = (props.GAMMA_VAPOR - 1.0) / props.GAMMA_VAPOR
-    isentropic = (
-        props.CP_VAPOR
-        * props.to_kelvin(t_evap_C)
-        * ((p_discharge / p_evap) ** exponent - 1.0)
-    )
-    return isentropic / p.fan_isentropic_efficiency
+    dp_rise = (p_cond + p.duct_pressure_drop_pa) - p_evap
+    rho_v = props.vapor_density(t_evap_C, p_evap)
+    return dp_rise / rho_v / p.fan_isentropic_efficiency
 
 
 @dataclass

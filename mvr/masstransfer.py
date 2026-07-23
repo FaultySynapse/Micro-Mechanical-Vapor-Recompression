@@ -345,19 +345,22 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     heat_limited_rate = UA * p.temp_lift / h_fg
     mt_effectiveness = m_dot / heat_limited_rate if heat_limited_rate > 0 else 0.0
 
-    # --- Fan power -----------------------------------------------------------
-    # The fan pressurizes everything it moves.  In flow mode it circulates
-    # `circulated_mass` (>= net vapor), all of which is compressed each pass and
-    # throttled back on return -- so recirculation is a real, growing cost.
-    p_discharge = p_cond_tot + p.duct_pressure_drop_pa
-    exponent = (props.GAMMA_VAPOR - 1.0) / props.GAMMA_VAPOR
-    w_specific = (props.CP_VAPOR * t_evap_K
-                  * ((p_discharge / p_evap_tot) ** exponent - 1.0)
-                  / p.fan_isentropic_efficiency)
-    pumped_mass = circulated_mass if circulated_mass is not None else m_dot
-    shaft_power = pumped_mass * w_specific
-    fan_power = shaft_power / p.fan_motor_efficiency
+    # --- Fan power (fan-curve model: air power Q*dP over efficiency) ----------
+    # The fan moves a volumetric flow Q against the pressure rise dP; the ideal
+    # "air power" is Q*dP, the shaft work is that over the aerodynamic
+    # efficiency, and the electrical draw is the shaft work over the motor
+    # efficiency.  This is the same Q*dP/eta the blower curve uses, so every
+    # reported figure is on one basis.  In flow mode Q is the circulated sweep
+    # flow; otherwise it is the net vapor volume flow.
     rho_v = props.vapor_density(t_evap, max(pv_evap, 1.0))
+    dp_rise = (p_cond_tot + p.duct_pressure_drop_pa) - p_evap_tot
+    fan_flow = (p.fan_volumetric_flow if p.transfer_from_flow
+                else m_dot / rho_v)
+    air_power = fan_flow * dp_rise
+    shaft_power = air_power / p.fan_isentropic_efficiency
+    fan_power = shaft_power / p.fan_motor_efficiency
+    pumped_mass = props.vapor_density(t_evap, p_evap_tot) * fan_flow
+    w_specific = shaft_power / pumped_mass if pumped_mass > 0 else 0.0
     vapor_volume_flow = m_dot / rho_v
     circulation_ratio = (pumped_mass / m_dot) if m_dot > 0 else 0.0
 
@@ -511,11 +514,19 @@ def solve_at_speed(p: DesignParameters, blower, speed_ratio: float,
     """
     b = blower.at_speed(speed_ratio)
     flow = b.design_flow
-    compression_pa = b.design_pressure - duct_loss_coeff * flow * flow
-    lift = lift_from_compression_pressure(compression_pa, p.evaporator_temp_C,
+    # The blower head covers the useful compression plus the duct drop; the model
+    # re-adds the duct drop internally, so remove it here to avoid double-counting.
+    compression_pa = (b.design_pressure - p.duct_pressure_drop_pa
+                      - duct_loss_coeff * flow * flow)
+    lift = lift_from_compression_pressure(max(compression_pa, 0.0),
+                                          p.evaporator_temp_C,
                                           p.noncondensable_pressure)
+    # Make the model's Q·Δp/η fan power use the blower's own efficiency, so its
+    # reported fan_power equals the blower draw (one consistent power basis).
+    isen = min(b.efficiency(flow) / p.fan_motor_efficiency, 1.0)
     result = solve_evaporative(replace(p, fan_volumetric_flow=flow,
                                        temp_lift=max(lift, 0.05),
+                                       fan_isentropic_efficiency=isen,
                                        transfer_from_flow=True))
     rho_sat = props.vapor_density(p.evaporator_temp_C,
                                   props.sat_pressure(p.evaporator_temp_C))

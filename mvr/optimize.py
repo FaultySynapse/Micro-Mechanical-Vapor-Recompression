@@ -25,7 +25,6 @@ from typing import Callable, Iterable
 from .parameters import DesignParameters
 from .model import solve
 from . import properties as props
-from . import fan
 
 Objective = Callable[[DesignParameters], float]
 
@@ -222,44 +221,32 @@ def _pattern_search(score, x0, bounds, rel_tol: float = 2e-3,
     return x, fx
 
 
-def _blower_compression(flow_m3s: float, blower_power_w: float,
-                        gas_density: float) -> tuple[float, float]:
-    """Compression pressure (Pa) and efficiency for best-efficiency operation.
-
-    At the blower's best-efficiency point ``flow · Δp = η · power``.  The
-    efficiency comes from the duty's specific speed (a couple of fixed-point
-    iterations, since η barely moves in this low-specific-speed regime).
-    """
-    eff = 0.48
-    dp = eff * blower_power_w / flow_m3s
-    for _ in range(3):
-        ns = fan.specific_speed(flow_m3s, dp, gas_density, 3000.0)
-        eff = fan.achievable_efficiency(ns)
-        dp = eff * blower_power_w / flow_m3s
-    return dp, eff
-
-
 def solve_at_budget(cand: DesignParameters, budget_w: float):
     """Solve a candidate at ``budget_w`` total power via the blower coupling.
 
     The operating flow is ``cand.fan_volumetric_flow``; the compression lift is
-    derived from the blower curve and the power (not a free input).  The blower
-    power is ``budget − auxiliary heating``, resolved by a short fixed-point
-    iteration (auxiliary heating is usually zero at good designs).  Returns
-    ``(EvaporativeResults, lift_K, efficiency, blower_power_w)``.
+    derived from the fan curve and the power (not a free input).  Best-efficiency
+    operation gives ``flow · Δp = η · blower power`` with ``η`` the overall
+    efficiency (aerodynamic × motor) -- the *same* efficiency the evaporative
+    model uses for ``Q·Δp/η`` fan power, so the model's ``fan_power`` equals the
+    blower draw.  The blower power is ``budget − auxiliary heating``, resolved by
+    a short fixed-point iteration (auxiliary heating is usually zero at good
+    designs).  Returns ``(EvaporativeResults, lift_K, efficiency, blower_power_w)``.
     """
     from .masstransfer import solve_evaporative, lift_from_compression_pressure
 
     t = cand.evaporator_temp_C
     p_ncg = cand.noncondensable_pressure
-    rho = props.vapor_density(t, props.sat_pressure(t) + p_ncg)
+    eff = cand.fan_isentropic_efficiency * cand.fan_motor_efficiency
     flow = cand.fan_volumetric_flow
 
     blower_power = budget_w
-    result = lift = eff = None
-    for _ in range(5):
-        dp, eff = _blower_compression(flow, blower_power, rho)
-        lift = lift_from_compression_pressure(dp, t, p_ncg)
+    result = lift = None
+    for _ in range(6):
+        # Blower air power eff·power = Q·(useful compression + duct loss), so the
+        # compression that drives the lift is what remains after the duct drop.
+        dp = eff * blower_power / flow - cand.duct_pressure_drop_pa
+        lift = lift_from_compression_pressure(max(dp, 0.0), t, p_ncg)
         result = solve_evaporative(replace(cand, temp_lift=max(lift, 0.05),
                                            transfer_from_flow=True))
         aux = max(result.makeup_heat, 0.0)
@@ -326,11 +313,11 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
     info = {
         "material": best.get("material"),
         "distillate_lph": best["flow"],
-        # Power per the fan curve (authoritative): blower draw + auxiliary heat.
+        # Power per the fan curve: blower draw + auxiliary heat.  The model's own
+        # fan power uses the same Q·Δp/η basis, so it matches blower_power_w.
         "blower_power_w": best.get("blower_power"),
         "auxiliary_heat_w": aux,
         "total_power_w": (best.get("blower_power") or 0.0) + aux,
-        # The model's own (isentropic) compression estimate, a cross-check.
         "model_fan_power_w": result.fan_power if result else None,
         "lift_K": best.get("lift"),
         "efficiency": best.get("efficiency"),
