@@ -16,7 +16,9 @@ from mvr.optimize import (
 )
 
 _STAINLESS = {"stainless_steel": {"wall_conductivity": 16.0, "wall_thickness": 0.0008}}
-_SMALL_BOUNDS = {"plate_area": (0.1, 0.5), "temp_lift": (2.0, 10.0)}
+# Lift is derived from the fan curve + power; the free flow/lift lever is the
+# operating flow, so the small search is over area and flow.
+_SMALL_BOUNDS = {"plate_area": (0.1, 0.5), "fan_volumetric_flow": (0.004, 0.03)}
 
 
 def _base(**kw) -> DesignParameters:
@@ -53,8 +55,11 @@ def test_maximize_flow_respects_budget_and_produces():
     params, r, info = maximize_flow(base, budget_w=600.0,
                                     bounds=_SMALL_BOUNDS, materials=_STAINLESS)
     assert r.distillate_rate > 0
-    assert r.total_energy_input <= 600.0 * 1.02
+    # Total power (blower + auxiliary heat) is spent to the budget by the coupling.
+    assert info["total_power_w"] == pytest.approx(600.0, rel=0.02)
     assert info["material"] == "stainless_steel"
+    # Lift is a derived output of the fan curve + power, not a free variable.
+    assert info["lift_K"] > 0
     # The optimizer should exploit the whole size budget (bigger plate helps).
     assert params.hx_area == pytest.approx(0.5, abs=1e-3)
 
@@ -69,13 +74,14 @@ def test_more_power_budget_yields_more_flow():
 
 
 def test_optimum_beats_a_naive_baseline():
+    from mvr.optimize import solve_at_budget
     base = _base()
     params, r_opt, _ = maximize_flow(base, budget_w=600.0,
                                      bounds=_SMALL_BOUNDS, materials=_STAINLESS)
-    # A naive mid-box design at the same 600 W budget should not beat the optimum.
+    # A naive mid-box design solved the same way (fan curve + power) should not
+    # beat the optimum.
     naive = replace(base, wall_conductivity=16.0, wall_thickness=0.0008,
                     hx_area=0.3, evap_area=0.3, condenser_area=0.3,
-                    temp_lift=6.0, transfer_from_flow=True)
-    vf = fan_flow_for_power_budget(naive, 600.0)
-    r_naive = solve_evaporative(replace(naive, fan_volumetric_flow=vf))
+                    fan_volumetric_flow=0.010, transfer_from_flow=True)
+    r_naive, _, _, _ = solve_at_budget(naive, 600.0)
     assert r_opt.distillate_lph >= r_naive.distillate_lph - 1e-6

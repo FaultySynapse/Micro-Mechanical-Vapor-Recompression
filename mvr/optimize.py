@@ -24,6 +24,8 @@ from typing import Callable, Iterable
 
 from .parameters import DesignParameters
 from .model import solve
+from . import properties as props
+from . import fan
 
 Objective = Callable[[DesignParameters], float]
 
@@ -121,14 +123,18 @@ WALL_MATERIALS = {
 
 #: Default box constraints for the flow-maximization search.  ``plate_area`` is a
 #: synthetic variable that sets the wall, evaporation and condensation areas
-#: together (one plate, two wetted faces).  All express a "small unit".
+#: together (one plate, two wetted faces).  ``fan_volumetric_flow`` is the
+#: blower's operating flow; the compression lift is NOT a free variable -- it is
+#: derived from the blower curve and the power (flow · Δp = η · blower power), so
+#: choosing the flow chooses the flow/lift split along the power budget.  All
+#: express a "small unit".
 DEFAULT_BOUNDS = {
-    "plate_area": (0.05, 0.60),          # m^2  (size limit)
-    "temp_lift": (1.5, 12.0),            # K
-    "evaporator_temp_C": (35.0, 80.0),   # C   (cold-side kept below 80 C)
-    "channel_gap": (0.005, 0.040),       # m    (size limit)
-    "channel_length": (0.20, 1.00),      # m    (size limit)
-    "insulation_ua": (0.03, 0.50),       # W/K  (better insulation costs size)
+    "plate_area": (0.05, 0.60),               # m^2   (size limit)
+    "fan_volumetric_flow": (0.003, 0.05),     # m^3/s (blower operating flow)
+    "evaporator_temp_C": (35.0, 80.0),        # C     (cold-side kept below 80 C)
+    "channel_gap": (0.005, 0.040),            # m     (size limit)
+    "channel_length": (0.20, 1.00),           # m     (size limit)
+    "insulation_ua": (0.03, 0.50),            # W/K   (better insulation costs size)
 }
 
 
@@ -216,33 +222,76 @@ def _pattern_search(score, x0, bounds, rel_tol: float = 2e-3,
     return x, fx
 
 
+def _blower_compression(flow_m3s: float, blower_power_w: float,
+                        gas_density: float) -> tuple[float, float]:
+    """Compression pressure (Pa) and efficiency for best-efficiency operation.
+
+    At the blower's best-efficiency point ``flow · Δp = η · power``.  The
+    efficiency comes from the duty's specific speed (a couple of fixed-point
+    iterations, since η barely moves in this low-specific-speed regime).
+    """
+    eff = 0.48
+    dp = eff * blower_power_w / flow_m3s
+    for _ in range(3):
+        ns = fan.specific_speed(flow_m3s, dp, gas_density, 3000.0)
+        eff = fan.achievable_efficiency(ns)
+        dp = eff * blower_power_w / flow_m3s
+    return dp, eff
+
+
+def solve_at_budget(cand: DesignParameters, budget_w: float):
+    """Solve a candidate at ``budget_w`` total power via the blower coupling.
+
+    The operating flow is ``cand.fan_volumetric_flow``; the compression lift is
+    derived from the blower curve and the power (not a free input).  The blower
+    power is ``budget − auxiliary heating``, resolved by a short fixed-point
+    iteration (auxiliary heating is usually zero at good designs).  Returns
+    ``(EvaporativeResults, lift_K, efficiency, blower_power_w)``.
+    """
+    from .masstransfer import solve_evaporative, lift_from_compression_pressure
+
+    t = cand.evaporator_temp_C
+    p_ncg = cand.noncondensable_pressure
+    rho = props.vapor_density(t, props.sat_pressure(t) + p_ncg)
+    flow = cand.fan_volumetric_flow
+
+    blower_power = budget_w
+    result = lift = eff = None
+    for _ in range(5):
+        dp, eff = _blower_compression(flow, blower_power, rho)
+        lift = lift_from_compression_pressure(dp, t, p_ncg)
+        result = solve_evaporative(replace(cand, temp_lift=max(lift, 0.05),
+                                           transfer_from_flow=True))
+        aux = max(result.makeup_heat, 0.0)
+        new_power = max(budget_w - aux, 1.0)
+        if abs(new_power - blower_power) < 0.5:
+            blower_power = new_power
+            break
+        blower_power = new_power
+    return result, lift, eff, blower_power
+
+
 def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
                   bounds: dict | None = None,
                   materials: dict | None = None):
     """Maximize distillate flow (L/h) under a total power budget and limits.
 
-    For each candidate wall material, the remaining design variables (areas,
-    lift, operating temperature, channel geometry, insulation) are searched by
-    pattern search; at every trial the fan flow is set to exactly spend
-    ``budget_w`` on fan + auxiliary heating.  Several deterministic restarts
-    guard against local optima.
+    The optimizer searches geometry (areas, channel), operating temperature,
+    insulation, the wall material, and the **blower operating flow**; the
+    compression lift is derived from the blower curve and the power, so choosing
+    the flow chooses the flow/lift split along the power budget (fan + auxiliary
+    heating).  Pattern search with deterministic restarts guards against local
+    optima.
 
     Returns ``(best_params, best_results, info)`` where ``info`` records the
-    winning material and the achieved production/power.
+    winning material, achieved production/power, and the blower operating point.
     """
-    from .masstransfer import solve_evaporative
-
     bounds = bounds or DEFAULT_BOUNDS
     materials = materials or WALL_MATERIALS
     names = list(bounds)
     box = [bounds[k] for k in names]
 
-    best_params = None
-    best_result = None
-    best_flow = -math.inf
-    best_material = None
-
-    # Deterministic restart fractions across the box.
+    best = {"flow": -math.inf}
     restarts = (0.35, 0.65)
 
     for mat_name, mat in materials.items():
@@ -253,35 +302,42 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
 
         def score(vec):
             try:
-                cand = build(vec)
-                vf = fan_flow_for_power_budget(cand, budget_w)
-                cand = replace(cand, fan_volumetric_flow=vf)
-                r = solve_evaporative(cand)
+                r, lift, eff, power = solve_at_budget(build(vec), budget_w)
             except (ValueError, ZeroDivisionError):
                 return -math.inf
-            # Reject designs that cannot be brought within the budget.
-            if r.total_energy_input > budget_w * 1.02:
+            if r.total_energy_input > budget_w * 1.05 or r.distillate_rate <= 0:
                 return -math.inf
             return r.distillate_lph
 
         for frac in restarts:
             x0 = [lo + frac * (hi - lo) for (lo, hi) in box]
             x_best, flow = _pattern_search(score, x0, box)
-            if flow > best_flow:
-                best_flow = flow
+            if flow > best["flow"]:
                 cand = build(x_best)
-                vf = fan_flow_for_power_budget(cand, budget_w)
-                best_params = replace(cand, fan_volumetric_flow=vf)
-                best_result = solve_evaporative(best_params)
-                best_material = mat_name
+                r, lift, eff, power = solve_at_budget(cand, budget_w)
+                best = {
+                    "flow": flow, "material": mat_name,
+                    "params": replace(cand, temp_lift=lift), "result": r,
+                    "lift": lift, "efficiency": eff, "blower_power": power,
+                }
 
+    result = best.get("result")
+    aux = max(result.makeup_heat, 0.0) if result else 0.0
     info = {
-        "material": best_material,
-        "distillate_lph": best_flow,
-        "total_power_w": best_result.total_energy_input if best_result else None,
+        "material": best.get("material"),
+        "distillate_lph": best["flow"],
+        # Power per the fan curve (authoritative): blower draw + auxiliary heat.
+        "blower_power_w": best.get("blower_power"),
+        "auxiliary_heat_w": aux,
+        "total_power_w": (best.get("blower_power") or 0.0) + aux,
+        # The model's own (isentropic) compression estimate, a cross-check.
+        "model_fan_power_w": result.fan_power if result else None,
+        "lift_K": best.get("lift"),
+        "efficiency": best.get("efficiency"),
+        "fan_volumetric_flow": best["params"].fan_volumetric_flow if best.get("params") else None,
         "budget_w": budget_w,
     }
-    return best_params, best_result, info
+    return best.get("params"), result, info
 
 
 def budget_constrained_flow(base: DesignParameters, budget_w: float) -> float:

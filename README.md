@@ -300,15 +300,18 @@ params, result, info = maximize_flow(base, budget_w=600.0)   # ~15 s
 print(info["material"], round(result.distillate_lph, 1), "L/h")
 ```
 
-It searches the design variables (plate area, temperature lift, operating
-temperature, channel gap/length, insulation, and wall material) with a
-derivative-free pattern search; at every trial the fan flow is set — by
-false-position on the near-linear power curve — so the design spends *exactly*
-the budget. Bounds and the material list are overridable
-(`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run `python examples/optimize_600W.py`.
+It searches the geometry (plate area, operating temperature, channel gap/length,
+insulation), the wall material, and the **blower operating flow** with a
+derivative-free pattern search. The **compression lift is not a free variable** —
+it is derived from the blower curve and the power: at best-efficiency operation
+`flow · Δp = η · blower power`, so choosing the flow chooses the flow/lift split
+along the budget (fan + auxiliary heating). Bounds and the material list are
+overridable (`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run
+`python examples/optimize_600W.py`.
 
 The default bounds keep the **cold-side temperature below 80 °C**; at **600 W**
-the optimizer lands on ~**12.4 L/h**, and the design tells a clear story:
+the optimizer lands on ~**11.5 L/h** (~11.8 with copper), with the blower drawing
+the full budget at a derived ~10.6 K lift. The design tells a clear story:
 
 - **Spend the budget on the fan, not the heater.** The optimum runs the fan hard
   enough that its dissipated work covers the losses (makeup heat goes *negative*,
@@ -320,20 +323,20 @@ the optimizer lands on ~**12.4 L/h**, and the design tells a clear story:
 - **Material barely matters.** Stainless trails copper by ~2 % despite 24× lower
   conductivity — the wall resistance is tiny next to the gas/film resistances —
   so the durable, non-corroding choice is essentially free.
-- **Flow scales sub-linearly with power** (~300 W → 9.5, 600 → 12.4, 900 →
-  ~14 L/h): doubling the budget buys only ~35 % more flow, because production
+- **Flow scales sub-linearly with power** (~300 W → 8.7, 600 → 11.5, 900 →
+  13.4 L/h): doubling the budget buys only ~35 % more flow, because production
   rises roughly as `√(fan power)`.
 
 **Cold-side temperature trade-off.** Capping `T_cold` at 80 °C is a *soft*
 compromise — it keeps ~95 % of the flow/efficiency of an 85 °C design. Below
-that the cost is gradual and roughly linear (~0.13 L/h and ~0.9 kWh/m³ per °C),
+that the cost is gradual and roughly linear (~0.14 L/h and ~0.9 kWh/m³ per °C),
 and the bottleneck flips from condensation-limited (below ~65 °C) to
 wall-heat-limited above:
 
 | T_cold (°C) | 50 | 60 | 70 | **80** | 85 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| flow (L/h) | 7.8 | 9.3 | 10.7 | **12.2** | 12.9 |
-| kWh/m³ | 77 | 65 | 56 | **49** | 47 |
+| flow (L/h) | 7.3 | 8.7 | 10.1 | **11.5** | 12.2 |
+| kWh/m³ | 72 | 60 | 52 | **46** | 43 |
 
 ### What binds — sensitivity analysis
 

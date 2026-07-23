@@ -15,6 +15,7 @@ from .parameters import DesignParameters
 from .model import Results, overall_U, report, solve, stream_metrics
 from .optimize import (
     maximize_flow,
+    solve_at_budget,
     fan_flow_for_power_budget,
     budget_constrained_flow,
     flow_sensitivity,
@@ -55,6 +56,7 @@ __all__ = [
     "htc_from_mass_transfer_coeff",
     # design optimization
     "maximize_flow",
+    "solve_at_budget",
     "fan_flow_for_power_budget",
     "budget_constrained_flow",
     "flow_sensitivity",
