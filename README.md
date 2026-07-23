@@ -350,20 +350,39 @@ conductivity is ~0** (material choice is irrelevant for a flat divider).
 Increasing all surfaces *together* (a bigger/denser plate) is the real lever
 (~0.5 combined); a tighter channel gap also helps (higher sweep velocity).
 
-### Non-condensable gas: load and purge (`mvr.ncg`)
+### Non-condensable gas: the integrated bleed valve (`mvr.ncg`)
 
 Air-saturated greywater carries ~0.8 mmol/L of dissolved gas (CO₂-rich water
-several times that); it flashes out under vacuum and must be purged. `mvr.ncg`
-estimates the **load** from the feed and the **purge cost** — the water vapor
-lost to hold a target NCG partial pressure (the bled gas is mostly steam), plus
-a rough purge-pump power. `python scripts/ncg_sensitivity.py` plots it.
+several times that); it flashes out under vacuum and a **bleed valve** vents it
+to hold `noncondensable_pressure`. The bled gas is mostly steam, so it is a real
+product loss and a real pump load — both are now **accounted inside the solve**.
+`solve_with_bleed(params)` returns the operating point plus a `BleedResult`
+(net production, water vented, vent-pump power, recovered water/heat), and
+`maximize_flow` optimizes **net** production with the pump power inside the
+budget. The `mvr.ncg` load/cost estimator and `scripts/ncg_sensitivity.py`
+remain for standalone sweeps.
 
-The purge target should track the operating regime. At 80 °C (wall-heat limited)
-net flow peaks near **P_ncg ≈ 200 Pa**; purging cleaner barely lifts gross flow
-(condensation isn't the bottleneck) while water loss and pump power climb. At
-lower temperature (condensation limited) deeper purging genuinely buys flow. A
-vent placed at the coldest, NCG-richest corner loses far less water than the
-bulk-composition estimate.
+**Feed-cooled recovery condenser** (`bleed_to_feed_condenser`). Routing the vent
+through a small condenser cooled by the incoming feed condenses most of the
+bleed's steam — back to product, its latent heat into the feed — and leaves only
+the residual non-condensables to vent (self-venting when the condenser sits above
+ambient). How much it buys depends on the gas load:
+
+| feed (P_ncg 500 Pa, 80 °C) | net L/h | vent pump | water vented |
+| --- | ---: | ---: | ---: |
+| air-saturated, direct vent | 11.52 | 1.5 W | 0.26 % |
+| air-saturated, **recovery** | 11.56 | 0.1 W | 0.01 % |
+| CO₂-rich (8×), direct vent | 11.24 | 11.8 W | 2.0 % |
+| CO₂-rich (8×), **recovery** | 11.55 | 0.6 W | 0.1 % |
+
+So for a clean feed the recovery is **marginal** (~0.3 % more product, ~1 W) —
+not worth the extra hardware. For **CO₂-rich greywater it earns its keep**:
+~2.8 % more net product and ~11 W of pump load returned to the fan, because the
+direct vent otherwise carries several percent of the product out as steam.
+Either way it nearly eliminates the vent-pump load (it pumps only residual NCG,
+not the steam). The purge *setpoint* should also track the regime: at 80 °C
+(wall-limited) net flow peaks near P_ncg ≈ 200 Pa; cooler (condensation-limited)
+units genuinely want a deeper purge.
 
 ### Fan/blower selection (`mvr.fan`)
 
@@ -408,7 +427,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (81 tests) covers property correlations against reference steam-table
+The suite (86 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -468,7 +487,7 @@ examples/
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (81 tests)
+tests/            pytest suite (86 tests)
 ```
 
 ## License

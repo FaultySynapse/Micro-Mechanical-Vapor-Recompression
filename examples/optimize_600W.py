@@ -46,10 +46,12 @@ def main() -> None:
     print(f"  blower efficiency ... {info['efficiency']:.2f} (overall)")
     print(f"  blower power ........ {info['blower_power_w']:.0f} W")
     print(f"  auxiliary heating ... {info['auxiliary_heat_w']:.0f} W")
+    print(f"  bleed vent pump ..... {info['pump_power_w']:.1f} W")
     print(f"  total power ......... {info['total_power_w']:.0f} W  (budget {BUDGET_W:.0f} W)")
     print()
     print("Performance")
-    print(f"  PRODUCTION .......... {r.distillate_lph:.2f} L/h")
+    print(f"  NET PRODUCTION ...... {info['net_distillate_lph']:.2f} L/h "
+          f"(gross {info['gross_distillate_lph']:.2f}, {info['water_lost_pct']:.2f}% vented)")
     print(f"  limited by .......... {r.limiting_mechanism} "
           f"(MT effectiveness {r.mass_transfer_effectiveness*100:.0f}%)")
     print(f"  sweep velocity ...... {r.evap_velocity:.2f} m/s (Re {r.evap_reynolds:.0f})")
@@ -57,12 +59,24 @@ def main() -> None:
           f"GOR {r.gain_output_ratio:.1f}")
     print()
 
+    # Bleed recovery: route the vent through a feed-cooled condenser to recover
+    # its steam (back to product) and heat, and shrink the vent pump load.
+    print("Bleed handling (net L/h | vent pump W | water vented %):")
+    for gas, glabel in ((0.00082, "air-saturated feed"), (0.00656, "CO2-rich feed (8x)")):
+        for recover, rlabel in ((False, "direct vent "), (True, "feed-cooled recovery")):
+            b = replace(base, dissolved_gas_mol_per_l=gas, bleed_to_feed_condenser=recover)
+            _, _, i = maximize_flow(b, budget_w=BUDGET_W,
+                                    materials={"stainless_steel": WALL_MATERIALS["stainless_steel"]})
+            print(f"  {glabel:18s} {rlabel}:  {i['net_distillate_lph']:6.2f} | "
+                  f"{i['pump_power_w']:5.1f} | {i['water_lost_pct']:4.2f}")
+    print()
+
     # Material matters little: the wall resistance is tiny next to the films, so
     # the durable (non-corroding) choice costs almost nothing in flow.
     print("Flow by wall material (durable choices lose almost nothing):")
     for name, mat in WALL_MATERIALS.items():
         _, rm, im = maximize_flow(base, budget_w=BUDGET_W, materials={name: mat})
-        print(f"  {name:16s} k={mat['wall_conductivity']:5.0f} W/mK -> {im['distillate_lph']:6.2f} L/h")
+        print(f"  {name:16s} k={mat['wall_conductivity']:5.0f} W/mK -> {im['net_distillate_lph']:6.2f} L/h")
     print()
 
     # How the achievable flow scales with the power budget.
@@ -70,7 +84,7 @@ def main() -> None:
     for budget in (300.0, 450.0, 600.0, 900.0):
         _, rb, ib = maximize_flow(base, budget_w=budget,
                                   materials={"stainless_steel": WALL_MATERIALS["stainless_steel"]})
-        print(f"  {budget:6.0f} W -> {ib['distillate_lph']:6.2f} L/h")
+        print(f"  {budget:6.0f} W -> {ib['net_distillate_lph']:6.2f} L/h")
     print()
 
     # Cold-side temperature trade-off: the design goal keeps T_cold < 80 C, but

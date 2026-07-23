@@ -229,11 +229,13 @@ def solve_at_budget(cand: DesignParameters, budget_w: float):
     operation gives ``flow · Δp = η · blower power`` with ``η`` the overall
     efficiency (aerodynamic × motor) -- the *same* efficiency the evaporative
     model uses for ``Q·Δp/η`` fan power, so the model's ``fan_power`` equals the
-    blower draw.  The blower power is ``budget − auxiliary heating``, resolved by
-    a short fixed-point iteration (auxiliary heating is usually zero at good
-    designs).  Returns ``(EvaporativeResults, lift_K, efficiency, blower_power_w)``.
+    blower draw.  The total budget is split between the blower, the auxiliary
+    heater (net of any heat the bleed recovers), and the bleed vent pump; the
+    split is resolved by a short fixed-point iteration.  Returns
+    ``(EvaporativeResults, lift_K, efficiency, blower_power_w, BleedResult)``.
     """
     from .masstransfer import solve_evaporative, lift_from_compression_pressure
+    from . import ncg
 
     t = cand.evaporator_temp_C
     p_ncg = cand.noncondensable_pressure
@@ -241,7 +243,7 @@ def solve_at_budget(cand: DesignParameters, budget_w: float):
     flow = cand.fan_volumetric_flow
 
     blower_power = budget_w
-    result = lift = None
+    result = lift = bleed = None
     for _ in range(6):
         # Blower air power eff·power = Q·(useful compression + duct loss), so the
         # compression that drives the lift is what remains after the duct drop.
@@ -249,13 +251,24 @@ def solve_at_budget(cand: DesignParameters, budget_w: float):
         lift = lift_from_compression_pressure(max(dp, 0.0), t, p_ncg)
         result = solve_evaporative(replace(cand, temp_lift=max(lift, 0.05),
                                            transfer_from_flow=True))
-        aux = max(result.makeup_heat, 0.0)
-        new_power = max(budget_w - aux, 1.0)
+        bleed = ncg.bleed_balance(
+            feed_rate_kg_s=result.feed_rate, feed_temp_C=cand.feed_temp_C,
+            distillate_rate_kg_s=result.distillate_rate, evap_temp_C=t,
+            p_ncg=p_ncg, cond_bulk_pv_pa=result.cond_bulk_pv_pa,
+            cond_total_pa=result.cond_total_pressure_pa, makeup_heat_w=result.makeup_heat,
+            dissolved_gas_mol_l=cand.dissolved_gas_mol_per_l,
+            release_fraction=cand.gas_release_fraction,
+            to_feed_condenser=cand.bleed_to_feed_condenser,
+            condenser_approach_C=cand.feed_condenser_approach_C,
+            pump_efficiency=cand.purge_pump_efficiency,
+        )
+        aux = max(result.makeup_heat - bleed.heat_recovered_w, 0.0)
+        new_power = max(budget_w - aux - bleed.pump_power_w, 1.0)
         if abs(new_power - blower_power) < 0.5:
             blower_power = new_power
             break
         blower_power = new_power
-    return result, lift, eff, blower_power
+    return result, lift, eff, blower_power, bleed
 
 
 def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
@@ -289,39 +302,46 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
 
         def score(vec):
             try:
-                r, lift, eff, power = solve_at_budget(build(vec), budget_w)
+                r, lift, eff, power, bleed = solve_at_budget(build(vec), budget_w)
             except (ValueError, ZeroDivisionError):
                 return -math.inf
-            if r.total_energy_input > budget_w * 1.05 or r.distillate_rate <= 0:
+            if r.distillate_rate <= 0:
                 return -math.inf
-            return r.distillate_lph
+            return bleed.net_distillate_lph          # optimize NET of the bleed loss
 
         for frac in restarts:
             x0 = [lo + frac * (hi - lo) for (lo, hi) in box]
             x_best, flow = _pattern_search(score, x0, box)
             if flow > best["flow"]:
                 cand = build(x_best)
-                r, lift, eff, power = solve_at_budget(cand, budget_w)
+                r, lift, eff, power, bleed = solve_at_budget(cand, budget_w)
                 best = {
                     "flow": flow, "material": mat_name,
                     "params": replace(cand, temp_lift=lift), "result": r,
                     "lift": lift, "efficiency": eff, "blower_power": power,
+                    "bleed": bleed,
                 }
 
     result = best.get("result")
-    aux = max(result.makeup_heat, 0.0) if result else 0.0
+    bleed = best.get("bleed")
+    aux = max(result.makeup_heat - (bleed.heat_recovered_w if bleed else 0.0), 0.0) if result else 0.0
+    pump = bleed.pump_power_w if bleed else 0.0
     info = {
         "material": best.get("material"),
-        "distillate_lph": best["flow"],
-        # Power per the fan curve: blower draw + auxiliary heat.  The model's own
-        # fan power uses the same Q·Δp/η basis, so it matches blower_power_w.
+        "net_distillate_lph": best["flow"],
+        "gross_distillate_lph": bleed.gross_distillate_lph if bleed else best["flow"],
+        # Power per the fan curve: blower draw + auxiliary heat + bleed vent pump.
+        # The model's own fan power uses the same Q·Δp/η basis as blower_power_w.
         "blower_power_w": best.get("blower_power"),
         "auxiliary_heat_w": aux,
-        "total_power_w": (best.get("blower_power") or 0.0) + aux,
+        "pump_power_w": pump,
+        "total_power_w": (best.get("blower_power") or 0.0) + aux + pump,
         "model_fan_power_w": result.fan_power if result else None,
         "lift_K": best.get("lift"),
         "efficiency": best.get("efficiency"),
         "fan_volumetric_flow": best["params"].fan_volumetric_flow if best.get("params") else None,
+        "water_lost_pct": (bleed.water_lost_kg_s / result.distillate_rate * 100.0
+                           if bleed and result and result.distillate_rate > 0 else 0.0),
         "budget_w": budget_w,
     }
     return best.get("params"), result, info

@@ -544,6 +544,32 @@ def solve_at_speed(p: DesignParameters, blower, speed_ratio: float,
     return result, op
 
 
+def solve_with_bleed(p: DesignParameters):
+    """Solve the evaporative operating point and the integrated bleed balance.
+
+    Returns ``(EvaporativeResults, BleedResult)``.  The bleed balance turns the
+    gross production into a **net** production (after the steam vented with the
+    non-condensables) and reports the vent pump power and any recovered water and
+    heat -- so the costs of holding ``noncondensable_pressure`` are accounted for
+    rather than assumed away.
+    """
+    from . import ncg
+
+    r = solve_evaporative(p)
+    bleed = ncg.bleed_balance(
+        feed_rate_kg_s=r.feed_rate, feed_temp_C=p.feed_temp_C,
+        distillate_rate_kg_s=r.distillate_rate, evap_temp_C=p.evaporator_temp_C,
+        p_ncg=p.noncondensable_pressure, cond_bulk_pv_pa=r.cond_bulk_pv_pa,
+        cond_total_pa=r.cond_total_pressure_pa, makeup_heat_w=r.makeup_heat,
+        dissolved_gas_mol_l=p.dissolved_gas_mol_per_l,
+        release_fraction=p.gas_release_fraction,
+        to_feed_condenser=p.bleed_to_feed_condenser,
+        condenser_approach_C=p.feed_condenser_approach_C,
+        pump_efficiency=p.purge_pump_efficiency,
+    )
+    return r, bleed
+
+
 def solve_at_power(p: DesignParameters, blower, power_w: float,
                    duct_loss_coeff: float = 0.0):
     """Solve the operating point for a blower drawing ``power_w`` electrical.

@@ -120,6 +120,23 @@ class DesignParameters:
     #: Lewis number (Sc/Pr) of the water-vapor/air gas mixture, for the analogy.
     lewis_number: float = 0.85
 
+    # --- Non-condensable bleed valve -----------------------------------------
+    # A bleed valve holds ``noncondensable_pressure`` by venting gas; the vented
+    # gas is mostly steam, so it costs product and pump work unless recovered.
+    #: Dissolved non-condensable gas in the feed, mol/L (air-saturated ~0.8 mmol/L;
+    #: CO2-rich greywater several times that).
+    dissolved_gas_mol_per_l: float = 0.00082
+    #: Fraction of dissolved gas that flashes off at operating conditions.
+    gas_release_fraction: float = 1.0
+    #: Route the bleed through a feed-cooled condenser to recover most of its
+    #: steam (back to product) and latent heat (to the feed), venting only the
+    #: residual non-condensables.
+    bleed_to_feed_condenser: bool = False
+    #: Temperature approach of the feed-cooled bleed condenser, K.
+    feed_condenser_approach_C: float = 5.0
+    #: Efficiency of the vacuum pump that vents the bleed (when below ambient).
+    purge_pump_efficiency: float = 0.30
+
     # --- Feed heat exchanger (economizer) ------------------------------------
     #: Effectiveness of the feed pre-heater recovering heat from the hot
     #: distillate and concentrate streams, 0-1.
@@ -169,6 +186,10 @@ class DesignParameters:
             "fan_volumetric_flow": self.fan_volumetric_flow > 0,
             "channel_length": self.channel_length > 0,
             "channel_gap": self.channel_gap > 0,
+            "dissolved_gas_mol_per_l": self.dissolved_gas_mol_per_l >= 0,
+            "gas_release_fraction": self.gas_release_fraction >= 0,
+            "feed_condenser_approach_C": self.feed_condenser_approach_C >= 0,
+            "purge_pump_efficiency": self.purge_pump_efficiency > 0,
         }
         bad = [name for name, ok in checks.items() if not ok]
         if bad:

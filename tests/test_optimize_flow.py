@@ -76,12 +76,12 @@ def test_more_power_budget_yields_more_flow():
 def test_optimum_beats_a_naive_baseline():
     from mvr.optimize import solve_at_budget
     base = _base()
-    params, r_opt, _ = maximize_flow(base, budget_w=600.0,
-                                     bounds=_SMALL_BOUNDS, materials=_STAINLESS)
+    params, r_opt, info = maximize_flow(base, budget_w=600.0,
+                                        bounds=_SMALL_BOUNDS, materials=_STAINLESS)
     # A naive mid-box design solved the same way (fan curve + power) should not
-    # beat the optimum.
+    # beat the optimum on net production.
     naive = replace(base, wall_conductivity=16.0, wall_thickness=0.0008,
                     hx_area=0.3, evap_area=0.3, condenser_area=0.3,
                     fan_volumetric_flow=0.010, transfer_from_flow=True)
-    r_naive, _, _, _ = solve_at_budget(naive, 600.0)
-    assert r_opt.distillate_lph >= r_naive.distillate_lph - 1e-6
+    _, _, _, _, bleed_naive = solve_at_budget(naive, 600.0)
+    assert info["net_distillate_lph"] >= bleed_naive.net_distillate_lph - 1e-6
