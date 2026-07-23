@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "micro-mvr"
+version = "0.1.0"
+description = "Modeling, simulation and optimization of a micro-scale mechanical vapor recompression (MVR) still for greywater purification"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []  # core model is pure standard library
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.5"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+mvr = "mvr.cli:main"
+
+[tool.setuptools]
+packages = ["mvr"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

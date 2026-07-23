@@ -1,0 +1,4 @@
+# Core model has no runtime dependencies (pure standard library).
+# These are optional extras:
+matplotlib>=3.5   # scripts/sweep_lift.py plotting
+pytest>=7         # test suite
