@@ -373,6 +373,23 @@ efficient turbomachine regime. The achievable *overall* efficiency (~0.48)
 corresponds to ~0.55 aerodynamic × ~0.85 motor, so it **validates** the model's
 default fan efficiencies rather than contradicting them.
 
+**Broad operating band (`BlowerCurve`).** A selected blower isn't a single
+point: `BlowerCurve` gives a broad-plateau efficiency hump and a falling
+head–flow curve, and `at_speed()` scales it by the affinity laws (Q ∝ N,
+Δp ∝ N², efficiency preserved). One blower sized to the 600 W duty, under speed
+control, spans a wide band at *constant* efficiency
+(`python examples/blower_band.py`):
+
+| speed | 60 % | 75 % | 100 % | 110 % | 125 % |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| flow (L/h) | 6.5 | 8.9 | **12.5** | 13.8 | 15.7 |
+| fan (W) | 149 | 277 | **605** | 779 | 1087 |
+
+So the design has generous turndown and headroom (≈6.5–15.7 L/h from one
+machine) rather than a narrow band; the 600 W target sits at ~100 % speed.
+`operating_point()` also settles a fixed-speed blower against a varying system
+resistance (feed swings, fouling).
+
 ## Tests
 
 ```bash
@@ -380,7 +397,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (68 tests) covers property correlations against reference steam-table
+The suite (74 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -436,10 +453,11 @@ examples/
   baseline.py     boiling: baseline report + optimized lift
   evaporative.py  evaporative: lift budget + NCG purge + fan-flow sweep
   optimize_600W.py  maximize flow for a 600 W power budget
+  blower_band.py  one blower's operating band by speed control
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (68 tests)
+tests/            pytest suite (74 tests)
 ```
 
 ## License

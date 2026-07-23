@@ -26,6 +26,7 @@ Pure standard library.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 
 def specific_speed(flow_m3s: float, pressure_rise_pa: float, gas_density: float,
@@ -116,3 +117,101 @@ def characterize_duty(flow_m3s: float, pressure_rise_pa: float,
         out["specific_diameter"] = specific_diameter(diameter_m, flow_m3s,
                                                      pressure_rise_pa, gas_density)
     return out
+
+
+# --- A selectable blower with a broad operating band -------------------------
+
+
+@dataclass
+class BlowerCurve:
+    """A blower characterized by its best-efficiency (design) point and a broad
+    dimensionless shape, usable across a range of flows and (via speed) duties.
+
+    At a fixed speed the head falls roughly linearly with flow from a shut-off
+    value to zero, and the efficiency is a *broad* hump about the design flow
+    (regenerative/PD blowers are forgiving) -- so the design is not pinned to a
+    narrow operating band.  Changing speed scales the whole curve by the affinity
+    laws (Q ~ N, Δp ~ N^2, P ~ N^3) while preserving efficiency.
+    """
+
+    design_flow: float          # m^3/s at the best-efficiency point
+    design_pressure: float      # Pa pressure rise at the BEP
+    peak_efficiency: float = 0.48   # overall (aero x motor)
+    shutoff_ratio: float = 1.60     # head at zero flow / design head
+    efficiency_breadth: float = 0.5  # smaller = broader plateau
+
+    @property
+    def max_flow(self) -> float:
+        """Free-delivery flow where the head falls to zero (fixed speed)."""
+        # Linear head line through (Q_design, 1) with intercept shutoff_ratio.
+        return self.design_flow * self.shutoff_ratio / (self.shutoff_ratio - 1.0)
+
+    def pressure(self, flow_m3s: float) -> float:
+        """Delivered pressure rise (Pa) at ``flow_m3s`` (fixed speed)."""
+        q = flow_m3s / self.design_flow
+        frac = self.shutoff_ratio - (self.shutoff_ratio - 1.0) * q
+        return max(frac, 0.0) * self.design_pressure
+
+    def efficiency(self, flow_m3s: float) -> float:
+        """Overall efficiency at ``flow_m3s`` -- a broad hump about the BEP."""
+        q = flow_m3s / self.design_flow
+        return self.peak_efficiency * max(1.0 - self.efficiency_breadth * (q - 1.0) ** 2, 0.05)
+
+    def power(self, flow_m3s: float) -> float:
+        """Electrical power (W) at ``flow_m3s`` = Q·Δp / efficiency."""
+        eff = self.efficiency(flow_m3s)
+        return flow_m3s * self.pressure(flow_m3s) / eff if eff > 0 else float("inf")
+
+    def at_speed(self, speed_ratio: float) -> "BlowerCurve":
+        """A new curve for the same blower run at ``speed_ratio`` × design speed
+        (affinity laws: Q ~ N, Δp ~ N^2; efficiency preserved)."""
+        return BlowerCurve(
+            design_flow=self.design_flow * speed_ratio,
+            design_pressure=self.design_pressure * speed_ratio ** 2,
+            peak_efficiency=self.peak_efficiency,
+            shutoff_ratio=self.shutoff_ratio,
+            efficiency_breadth=self.efficiency_breadth,
+        )
+
+    def operating_point(self, compression_pressure_pa: float,
+                        duct_loss_coeff: float = 0.0) -> dict:
+        """Where this blower settles against a system needing
+        ``compression_pressure_pa`` (≈ flow-independent) plus a duct loss
+        ``duct_loss_coeff · Q^2``.
+
+        Returns the operating flow, pressure, efficiency and power, or a
+        ``feasible=False`` flag if the blower cannot even reach the compression
+        pressure at shut-off.
+        """
+        if self.pressure(0.0) <= compression_pressure_pa:
+            return {"feasible": False, "flow_m3s": 0.0,
+                    "pressure_pa": self.pressure(0.0), "efficiency": 0.0,
+                    "power_w": float("inf")}
+
+        def excess(q):
+            return self.pressure(q) - (compression_pressure_pa + duct_loss_coeff * q * q)
+
+        lo, hi = 0.0, self.max_flow
+        for _ in range(60):
+            mid = 0.5 * (lo + hi)
+            if excess(mid) > 0.0:
+                lo = mid
+            else:
+                hi = mid
+        q_op = 0.5 * (lo + hi)
+        return {
+            "feasible": True,
+            "flow_m3s": q_op,
+            "pressure_pa": self.pressure(q_op),
+            "efficiency": self.efficiency(q_op),
+            "power_w": self.power(q_op),
+        }
+
+
+def size_blower_for_duty(flow_m3s: float, pressure_rise_pa: float,
+                         gas_density: float, speed_rpm: float = 3000.0) -> BlowerCurve:
+    """Build a :class:`BlowerCurve` whose best-efficiency point is the given duty,
+    with the achievable efficiency implied by the duty's specific speed."""
+    ns = specific_speed(flow_m3s, pressure_rise_pa, gas_density, speed_rpm)
+    return BlowerCurve(design_flow=flow_m3s, design_pressure=pressure_rise_pa,
+                       peak_efficiency=achievable_efficiency(ns))
