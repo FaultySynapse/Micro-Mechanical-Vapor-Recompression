@@ -18,6 +18,7 @@ from .masstransfer import (
     report_evaporative,
     solve_evaporative,
     mass_transfer_coeff_from_htc,
+    htc_from_mass_transfer_coeff,
 )
 from . import properties
 
@@ -34,6 +35,7 @@ __all__ = [
     "solve_evaporative",
     "report_evaporative",
     "mass_transfer_coeff_from_htc",
+    "htc_from_mass_transfer_coeff",
     "properties",
 ]
 

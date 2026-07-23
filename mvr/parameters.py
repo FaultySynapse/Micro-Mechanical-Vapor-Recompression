@@ -85,6 +85,23 @@ class DesignParameters:
     #: the pure-vapor, heat-transfer-limited (boiling) result.
     noncondensable_pressure: float = 500.0
 
+    # --- Gas-phase sensible heat transfer (evaporative model) ----------------
+    # The fan delivers vapor *superheated* (compression heats it, more so at low
+    # fan efficiency); shedding that superheat at the condenser needs gas-phase
+    # heat transfer, which -- like the mass transfer -- is not instantaneous.
+    #: Gas-phase sensible heat-transfer coefficient at the condenser, W/(m^2 K).
+    #: 0 => derive it from ``condenser_mass_transfer_coeff`` via the Chilton-
+    #: Colburn (Lewis) analogy, so the same gas film governs heat and mass.
+    condenser_gas_htc: float = 0.0
+    #: Vapor-space gas density used for the heat<->mass analogy, kg/m^3
+    #: (low because the space runs at reduced pressure).
+    gas_density: float = 0.1
+    #: Vapor-space gas specific heat used for the analogy and for desuperheating,
+    #: J/(kg K) (~superheated steam).
+    gas_specific_heat: float = 1900.0
+    #: Lewis number (Sc/Pr) of the water-vapor/air gas mixture, for the analogy.
+    lewis_number: float = 0.85
+
     # --- Feed heat exchanger (economizer) ------------------------------------
     #: Effectiveness of the feed pre-heater recovering heat from the hot
     #: distillate and concentrate streams, 0-1.
@@ -127,6 +144,10 @@ class DesignParameters:
             "evap_mass_transfer_coeff": self.evap_mass_transfer_coeff > 0,
             "condenser_mass_transfer_coeff": self.condenser_mass_transfer_coeff > 0,
             "noncondensable_pressure": self.noncondensable_pressure >= 0,
+            "condenser_gas_htc": self.condenser_gas_htc >= 0,
+            "gas_density": self.gas_density > 0,
+            "gas_specific_heat": self.gas_specific_heat > 0,
+            "lewis_number": self.lewis_number > 0,
         }
         bad = [name for name, ok in checks.items() if not ok]
         if bad:

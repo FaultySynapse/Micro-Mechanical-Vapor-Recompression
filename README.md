@@ -157,6 +157,31 @@ eating your compression work. Example (50 °C, 6 K lift, 1 kPa NCG): only ~1.4 K
 of the 6 K lift reaches the wall; condensation across the NCG-blanketed film eats
 ~2.7 K, and production is ~24 % of the naive heat-transfer limit.
 
+**Gas-phase sensible heat.** Working in partial pressures alone would assume the
+vapor is always at its local saturation temperature — i.e. that gas-phase
+*sensible* heat transfer is instantaneous. It isn't: the fan delivers the vapor
+**superheated** (compression heats it, and a low fan efficiency heats it more),
+and that superheat has to be shed through the same poorly-conducting gas film
+before the vapor can condense. The model makes this explicit via a lumped
+interface energy balance,
+
+```
+U·A·(T_i − T_evap) = ṁ·h_fg + ṁ·cp·ε_ds·(T_discharge − T_i)
+```
+
+where `T_discharge` is the actual (efficiency-adjusted) fan discharge
+temperature and `ε_ds` is an NTU desuperheating effectiveness built from a
+gas-phase heat-transfer coefficient (tied to the mass-transfer coefficient by
+the **Lewis analogy**, so the same film governs both). The report shows the
+discharge temperature, superheat, and the sensible duty.
+
+In this device the sensible load turns out to be a *small* fraction of the
+condenser duty (~1–4 % across 3–15 K lift) and changes production by well under
+1 %, because latent heat dwarfs sensible heat (`ṁ·h_fg ≫ ṁ·cp·ΔT`). That is a
+result of the model, not an assumption baked into it — the mechanism is present
+and would bite at high pressure ratio / low fan efficiency, and it also correctly
+books the superheat as fan work that ends up needing rejection.
+
 See `mvr/masstransfer.py` for the fully-commented derivation.
 
 ## Design parameters
@@ -253,6 +278,11 @@ energy; more NCG / slower mass transfer → less production).
   coefficient and a linear-in-flux form (no high-flux/interfacial-kinetic
   corrections); NCG is a single specified partial pressure, uniform per chamber,
   and its parasitic recirculation through the fan is neglected.
+- **Gas-phase sensible heat** is modeled at the condenser only, as a single-node
+  (inlet-superheat) interface energy balance with an NTU desuperheating
+  effectiveness — not a zonal desuperheat→condense integration. The evaporator
+  free surface is taken at the pool temperature (liquid-side heat delivery
+  assumed fast, i.e. no evaporative-cooling depression).
 - **Economizer** modeled by a single effectiveness `ε`; the hot side is a
   mass-weighted blend of distillate and concentrate.
 - **BPE** is a fixed input, not computed from greywater composition/recovery.

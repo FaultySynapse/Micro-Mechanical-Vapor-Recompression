@@ -40,15 +40,50 @@ def test_film_flow_zero_and_infinite_limits():
 
 
 def test_recovers_heat_limit_when_ncg_zero_and_mt_fast():
-    # With negligible NCG and fast mass transfer, the coupled model must collapse
-    # onto the heat-transfer-limited boiling result.
+    # With negligible NCG, fast mass transfer, and the gas-phase sensible load
+    # switched off (tiny condenser_gas_htc), the coupled model must collapse onto
+    # the heat-transfer-limited boiling result.
     p = _lowtemp(noncondensable_pressure=1e-3,
-                 evap_mass_transfer_coeff=5.0, condenser_mass_transfer_coeff=5.0)
+                 evap_mass_transfer_coeff=5.0, condenser_mass_transfer_coeff=5.0,
+                 condenser_gas_htc=1e-9)
     r_evap = solve_evaporative(p)
     r_boil = solve(p)
     assert r_evap.mass_transfer_effectiveness > 0.98
     assert r_evap.distillate_rate == pytest.approx(r_boil.distillate_rate, rel=0.02)
     assert r_evap.limiting_mechanism == "wall-heat"
+
+
+def test_compression_superheat_is_positive_and_grows_with_ratio():
+    # Higher lift -> larger pressure ratio -> more compression superheat.
+    low = solve_evaporative(_lowtemp(temp_lift=2.0))
+    high = solve_evaporative(_lowtemp(temp_lift=10.0))
+    assert low.condenser_superheat_K > 0
+    assert high.condenser_superheat_K > low.condenser_superheat_K
+    assert high.discharge_temp_C > high.evap_temp_C
+
+
+def test_lower_fan_efficiency_raises_superheat():
+    # A less efficient fan reheats the vapor more.
+    eff = solve_evaporative(_lowtemp(fan_isentropic_efficiency=0.9))
+    ineff = solve_evaporative(_lowtemp(fan_isentropic_efficiency=0.4))
+    assert ineff.condenser_superheat_K > eff.condenser_superheat_K
+
+
+def test_gas_sensible_load_reduces_production():
+    # Modeling gas-phase sensible heat (finite gas HTC) must not *increase*
+    # production versus ignoring it (negligible gas HTC): the shed superheat is
+    # an extra load on the wall.
+    with_gas = solve_evaporative(_lowtemp(condenser_gas_htc=200.0))
+    without_gas = solve_evaporative(_lowtemp(condenser_gas_htc=1e-9))
+    assert with_gas.distillate_rate <= without_gas.distillate_rate
+    assert with_gas.sensible_duty > without_gas.sensible_duty
+
+
+def test_sensible_duty_is_minor_fraction_of_wall_duty():
+    # For this device latent heat dominates: the sensible (desuperheat) load
+    # should be a small fraction of the total condenser duty.
+    r = solve_evaporative(_lowtemp())
+    assert 0.0 <= r.sensible_fraction < 0.15
 
 
 def test_more_ncg_reduces_production():
