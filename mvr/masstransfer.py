@@ -41,6 +41,7 @@ import math
 from dataclasses import dataclass
 
 from . import properties as props
+from . import transport
 from .model import overall_U, stream_metrics
 from .parameters import DesignParameters
 
@@ -82,11 +83,19 @@ class EvaporativeResults:
     lift_condensation: float
     lift_useful_wall: float
 
-    # Fan
+    # Fan / fan-driven transport
     overall_U: float
-    vapor_volume_flow: float
+    vapor_volume_flow: float          # net vapor volume flow (evaporator conds)
     compression_work_specific: float
     fan_power: float
+    fan_circulation_flow: float       # gas the fan sweeps over the surfaces, m^3/s
+    circulation_ratio: float          # circulated gas mass / net vapor mass
+    evap_velocity: float              # sweep velocity over the evaporator, m/s
+    cond_velocity: float              # sweep velocity over the condenser, m/s
+    evap_reynolds: float
+    cond_reynolds: float
+    evap_htc_mass: float              # mass-transfer coeff used at evaporator, m/s
+    cond_htc_mass: float              # mass-transfer coeff used at condenser, m/s
 
     # Feed / streams / energy (from the shared helper)
     feed_rate: float
@@ -152,13 +161,13 @@ def htc_from_mass_transfer_coeff(mass_transfer_coeff: float,
 
 
 def _invert_evaporation(p: DesignParameters, m_dot: float,
-                        t_evap_C: float, p_evap_tot: float) -> float:
+                        t_evap_C: float, p_evap_tot: float, h_m: float) -> float:
     """Bulk water partial pressure that sustains evaporation ``m_dot`` (Pa)."""
     p_surf = props.sat_pressure(t_evap_C)
     t_K = props.to_kelvin(t_evap_C)
 
     def flow(p_v_bulk: float) -> float:
-        return film_mass_flow(p.evap_mass_transfer_coeff, p.evap_area, t_K,
+        return film_mass_flow(h_m, p.evap_area, t_K,
                               p_evap_tot, p_surf, p_v_bulk)
 
     # flow decreases as the bulk pressure rises toward the surface value.
@@ -175,7 +184,7 @@ def _invert_evaporation(p: DesignParameters, m_dot: float,
 
 
 def _invert_condensation(p: DesignParameters, m_dot: float,
-                         t_surf_C: float, p_cond_tot: float) -> float:
+                         t_surf_C: float, p_cond_tot: float, h_m: float) -> float:
     """Bulk water partial pressure needed to condense ``m_dot`` onto a surface
     at ``t_surf_C`` (Pa)."""
     p_surf = props.sat_pressure(t_surf_C)
@@ -184,7 +193,7 @@ def _invert_condensation(p: DesignParameters, m_dot: float,
         return p_cond_tot               # surface too hot to condense: infeasible
 
     def flow(p_v_bulk: float) -> float:
-        return film_mass_flow(p.condenser_mass_transfer_coeff, p.condenser_area,
+        return film_mass_flow(h_m, p.condenser_area,
                               t_K, p_cond_tot, p_v_bulk, p_surf)
 
     # flow increases as the bulk pressure rises above the surface value.
@@ -214,6 +223,30 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     UA = U * p.hx_area
     h_fg = props.latent_heat(t_evap)
 
+    # --- Transfer coefficients: from the fan-driven sweep, or fixed inputs ----
+    t_cond_ref = t_evap + p.temp_lift
+    rho_evap = props.vapor_density(t_evap, p_evap_tot)
+    rho_cond = props.vapor_density(t_cond_ref, p_cond_tot)
+    if p.transfer_from_flow:
+        # Fan circulates fan_volumetric_flow over the surfaces (evaporator inlet
+        # conditions); mass continuity sets the denser, slower condenser sweep.
+        circulated_mass = rho_evap * p.fan_volumetric_flow
+        xsec_evap = (p.evap_area / p.channel_length) * p.channel_gap
+        xsec_cond = (p.condenser_area / p.channel_length) * p.channel_gap
+        vel_evap = p.fan_volumetric_flow / xsec_evap
+        vel_cond = (circulated_mass / rho_cond) / xsec_cond
+        h_m_e, _hg_e, diag_e = transport.surface_transfer_coefficients(
+            vel_evap, p.channel_length, t_evap, p_evap_tot, rho_evap, p.gas_specific_heat)
+        h_m_c, h_g_flow, diag_c = transport.surface_transfer_coefficients(
+            vel_cond, p.channel_length, t_cond_ref, p_cond_tot, rho_cond, p.gas_specific_heat)
+    else:
+        circulated_mass = None          # fan power falls back to net throughput
+        h_m_e = p.evap_mass_transfer_coeff
+        h_m_c = p.condenser_mass_transfer_coeff
+        h_g_flow = None
+        vel_evap = vel_cond = 0.0
+        diag_e = diag_c = {"reynolds": 0.0}
+
     # --- Gas-phase sensible heat transfer at the condenser -------------------
     # The fan delivers the vapor superheated.  Actual (not just isentropic)
     # discharge temperature, including the reheat from fan inefficiency:
@@ -222,10 +255,16 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     discharge_K = t_evap_K * (1.0 + (isentropic_factor - 1.0) / p.fan_isentropic_efficiency)
     discharge_C = discharge_K - props.ZERO_C_IN_K
     cp_gas = p.gas_specific_heat
-    # Gas-side sensible coefficient: explicit, or from the Lewis analogy so the
-    # same (NCG-laden) gas film limits heat and mass transfer alike.
-    h_g = p.condenser_gas_htc or htc_from_mass_transfer_coeff(
-        p.condenser_mass_transfer_coeff, p.gas_density, cp_gas, p.lewis_number)
+    # Gas-side sensible coefficient: an explicit override wins; otherwise use the
+    # flat-plate value from the fan sweep (flow mode) or the Lewis analogy from
+    # the fixed mass-transfer coefficient (fallback).  Same gas film either way.
+    if p.condenser_gas_htc:
+        h_g = p.condenser_gas_htc
+    elif h_g_flow is not None:
+        h_g = h_g_flow
+    else:
+        h_g = htc_from_mass_transfer_coeff(
+            p.condenser_mass_transfer_coeff, p.gas_density, cp_gas, p.lewis_number)
 
     def _desuperheat_eff(m_dot: float) -> float:
         """NTU effectiveness for cooling the vapor toward the interface."""
@@ -248,15 +287,20 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
         return num / (UA + cap)
 
     # Upper bracket on m_dot: the wall cannot push the condensation interface
-    # above the condenser saturation temperature.
+    # above the condenser saturation temperature, and (flow mode) the fan cannot
+    # deliver more vapor than it circulates.
     t_surf_ceiling = props.sat_temperature(p_cond_tot)
-    m_dot_max = max(UA * (t_surf_ceiling - t_evap) / h_fg, 1e-9) * 0.999
+    m_dot_ceiling = UA * (t_surf_ceiling - t_evap) / h_fg
+    if p.transfer_from_flow:
+        deliverable = props.vapor_density(t_evap, p_sat_evap) * p.fan_volumetric_flow
+        m_dot_ceiling = min(m_dot_ceiling, deliverable)
+    m_dot_max = max(m_dot_ceiling, 1e-9) * 0.999
 
     def residual(m_dot: float) -> float:
         t_surf = _interface_temp(m_dot)
-        pv_cond = _invert_condensation(p, m_dot, t_surf, p_cond_tot)
+        pv_cond = _invert_condensation(p, m_dot, t_surf, p_cond_tot, h_m_c)
         pv_evap_from_fan = pv_cond / ratio          # fan scales water p_v by ratio
-        pv_evap_required = _invert_evaporation(p, m_dot, t_evap, p_evap_tot)
+        pv_evap_required = _invert_evaporation(p, m_dot, t_evap, p_evap_tot, h_m_e)
         return pv_evap_from_fan - pv_evap_required
 
     # residual(0) < 0 and residual(m_dot_max) > 0 -> unique bracketed root.
@@ -271,7 +315,7 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
 
     # --- Reconstruct the converged state -------------------------------------
     t_surf_cond = _interface_temp(m_dot)
-    pv_cond = _invert_condensation(p, m_dot, t_surf_cond, p_cond_tot)
+    pv_cond = _invert_condensation(p, m_dot, t_surf_cond, p_cond_tot, h_m_c)
     pv_evap = pv_cond / ratio
 
     # Gas-phase sensible (desuperheat) diagnostics.
@@ -301,16 +345,21 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     heat_limited_rate = UA * p.temp_lift / h_fg
     mt_effectiveness = m_dot / heat_limited_rate if heat_limited_rate > 0 else 0.0
 
-    # --- Fan power (compress water vapor from evaporator to condenser) --------
+    # --- Fan power -----------------------------------------------------------
+    # The fan pressurizes everything it moves.  In flow mode it circulates
+    # `circulated_mass` (>= net vapor), all of which is compressed each pass and
+    # throttled back on return -- so recirculation is a real, growing cost.
     p_discharge = p_cond_tot + p.duct_pressure_drop_pa
     exponent = (props.GAMMA_VAPOR - 1.0) / props.GAMMA_VAPOR
     w_specific = (props.CP_VAPOR * t_evap_K
                   * ((p_discharge / p_evap_tot) ** exponent - 1.0)
                   / p.fan_isentropic_efficiency)
-    shaft_power = m_dot * w_specific
+    pumped_mass = circulated_mass if circulated_mass is not None else m_dot
+    shaft_power = pumped_mass * w_specific
     fan_power = shaft_power / p.fan_motor_efficiency
     rho_v = props.vapor_density(t_evap, max(pv_evap, 1.0))
     vapor_volume_flow = m_dot / rho_v
+    circulation_ratio = (pumped_mass / m_dot) if m_dot > 0 else 0.0
 
     # --- Streams / energy balance / figures of merit (shared helper) ---------
     metrics = stream_metrics(
@@ -348,6 +397,14 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
         vapor_volume_flow=vapor_volume_flow,
         compression_work_specific=w_specific,
         fan_power=fan_power,
+        fan_circulation_flow=(p.fan_volumetric_flow if p.transfer_from_flow else vapor_volume_flow),
+        circulation_ratio=circulation_ratio,
+        evap_velocity=vel_evap,
+        cond_velocity=vel_cond,
+        evap_reynolds=diag_e.get("reynolds", 0.0),
+        cond_reynolds=diag_c.get("reynolds", 0.0),
+        evap_htc_mass=h_m_e,
+        cond_htc_mass=h_m_c,
         feed_rate=metrics.feed_rate,
         concentrate_rate=metrics.concentrate_rate,
         feed_preheat_temp_C=metrics.feed_preheat_temp_C,
@@ -389,8 +446,15 @@ def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
         f"   spent on condensation MT .. {r.lift_condensation:8.3f}",
         f"   useful across the wall .... {r.lift_useful_wall:8.3f}",
         "",
+        " Fan-driven transport",
+        f"   fan circulation flow ...... {r.fan_circulation_flow*1000:8.2f} L/s",
+        f"   circulation ratio ......... {r.circulation_ratio:8.1f} x net vapor",
+        f"   evap / cond sweep vel ..... {r.evap_velocity:7.2f} / {r.cond_velocity:.2f} m/s",
+        f"   evap / cond Reynolds ...... {r.evap_reynolds:7.0f} / {r.cond_reynolds:.0f}",
+        f"   evap / cond h_m (mass) .... {r.evap_htc_mass*1000:7.2f} / {r.cond_htc_mass*1000:.2f} mm/s",
+        "",
         " Fan / vapor compression",
-        f"   vapor volume flow ......... {r.vapor_volume_flow*1000:8.2f} L/s",
+        f"   net vapor volume flow ..... {r.vapor_volume_flow*1000:8.2f} L/s",
         f"   compression work .......... {r.compression_work_specific/1000:8.2f} kJ/kg",
         f"   fan electrical power ...... {r.fan_power:8.1f} W",
         "",

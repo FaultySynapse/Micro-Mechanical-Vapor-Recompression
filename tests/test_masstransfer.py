@@ -20,6 +20,13 @@ def _lowtemp(**overrides) -> DesignParameters:
     return DesignParameters(**base)
 
 
+def _fixed_coeff(**overrides) -> DesignParameters:
+    """Low-temp params in fixed-coefficient mode (transfer_from_flow off)."""
+    base = dict(transfer_from_flow=False)
+    base.update(overrides)
+    return _lowtemp(**base)
+
+
 def test_runs_and_is_sane():
     r = solve_evaporative(_lowtemp())
     assert isinstance(r, EvaporativeResults)
@@ -43,9 +50,9 @@ def test_recovers_heat_limit_when_ncg_zero_and_mt_fast():
     # With negligible NCG, fast mass transfer, and the gas-phase sensible load
     # switched off (tiny condenser_gas_htc), the coupled model must collapse onto
     # the heat-transfer-limited boiling result.
-    p = _lowtemp(noncondensable_pressure=1e-3,
-                 evap_mass_transfer_coeff=5.0, condenser_mass_transfer_coeff=5.0,
-                 condenser_gas_htc=1e-9)
+    p = _fixed_coeff(noncondensable_pressure=1e-3,
+                     evap_mass_transfer_coeff=5.0, condenser_mass_transfer_coeff=5.0,
+                     condenser_gas_htc=1e-9)
     r_evap = solve_evaporative(p)
     r_boil = solve(p)
     assert r_evap.mass_transfer_effectiveness > 0.98
@@ -94,26 +101,26 @@ def test_more_ncg_reduces_production():
 
 
 def test_faster_mass_transfer_increases_production():
-    slow = solve_evaporative(_lowtemp(evap_mass_transfer_coeff=0.005,
-                                      condenser_mass_transfer_coeff=0.005))
-    fast = solve_evaporative(_lowtemp(evap_mass_transfer_coeff=0.2,
-                                      condenser_mass_transfer_coeff=0.2))
+    slow = solve_evaporative(_fixed_coeff(evap_mass_transfer_coeff=0.005,
+                                          condenser_mass_transfer_coeff=0.005))
+    fast = solve_evaporative(_fixed_coeff(evap_mass_transfer_coeff=0.2,
+                                          condenser_mass_transfer_coeff=0.2))
     assert fast.distillate_rate > slow.distillate_rate
     assert fast.mass_transfer_effectiveness > slow.mass_transfer_effectiveness
 
 
 def test_larger_surfaces_increase_production_when_mt_limited():
-    small = solve_evaporative(_lowtemp(evap_area=0.1, condenser_area=0.1))
-    large = solve_evaporative(_lowtemp(evap_area=1.0, condenser_area=1.0))
+    small = solve_evaporative(_fixed_coeff(evap_area=0.1, condenser_area=0.1))
+    large = solve_evaporative(_fixed_coeff(evap_area=1.0, condenser_area=1.0))
     assert large.distillate_rate > small.distillate_rate
 
 
 def test_production_never_exceeds_heat_limit():
     for ncg in (10.0, 500.0, 3000.0):
         for hm in (0.01, 0.1, 1.0):
-            r = solve_evaporative(_lowtemp(noncondensable_pressure=ncg,
-                                           evap_mass_transfer_coeff=hm,
-                                           condenser_mass_transfer_coeff=hm))
+            r = solve_evaporative(_fixed_coeff(noncondensable_pressure=ncg,
+                                               evap_mass_transfer_coeff=hm,
+                                               condenser_mass_transfer_coeff=hm))
             assert r.distillate_rate <= r.heat_limited_rate * 1.02
 
 
@@ -152,3 +159,70 @@ def test_condensation_surface_pressure_consistency():
     # total pressure (otherwise it could not condense).
     r = solve_evaporative(_lowtemp())
     assert props.sat_pressure(r.cond_surface_temp_C) <= r.cond_total_pressure_pa * 1.001
+
+
+# --- Fan-driven transport (transfer coefficients from the fan flow) ----------
+
+def test_flow_mode_computes_coefficients_and_velocities():
+    r = solve_evaporative(_lowtemp())            # transfer_from_flow defaults True
+    assert r.evap_velocity > 0 and r.cond_velocity > 0
+    assert r.evap_reynolds > 0 and r.cond_reynolds > 0
+    assert r.evap_htc_mass > 0 and r.cond_htc_mass > 0
+    # The fan sweeps more gas than the net vapor it condenses.
+    assert r.circulation_ratio >= 1.0
+
+
+def test_more_fan_flow_increases_production_and_transfer():
+    low = solve_evaporative(_lowtemp(fan_volumetric_flow=0.004))
+    high = solve_evaporative(_lowtemp(fan_volumetric_flow=0.040))
+    assert high.evap_velocity > low.evap_velocity
+    assert high.evap_htc_mass > low.evap_htc_mass       # faster sweep, thinner film
+    assert high.distillate_rate > low.distillate_rate
+
+
+def test_more_fan_flow_costs_more_power_per_liter():
+    # In this regime fan power grows ~linearly with flow but production only
+    # ~sqrt, so pushing more flow worsens specific energy: the fan-sizing tension.
+    low = solve_evaporative(_lowtemp(fan_volumetric_flow=0.004))
+    high = solve_evaporative(_lowtemp(fan_volumetric_flow=0.040))
+    assert high.fan_power > low.fan_power
+    assert high.specific_energy_kwh_per_l > low.specific_energy_kwh_per_l
+
+
+def test_flow_coefficient_scaling_is_sqrt_like():
+    # Laminar flat plate: h_m ~ velocity^0.5.  A 4x flow should raise h_m ~2x.
+    r1 = solve_evaporative(_lowtemp(fan_volumetric_flow=0.005))
+    r2 = solve_evaporative(_lowtemp(fan_volumetric_flow=0.020))
+    ratio = r2.evap_htc_mass / r1.evap_htc_mass
+    assert 1.7 < ratio < 2.3
+
+
+def test_lower_pressure_raises_diffusivity_and_transfer():
+    # Same fan flow, lower evaporator temperature -> lower pressure -> higher
+    # diffusivity and (lower density ->) higher sweep velocity, so a larger h_m.
+    warm = solve_evaporative(_lowtemp(evaporator_temp_C=70.0))
+    cool = solve_evaporative(_lowtemp(evaporator_temp_C=40.0))
+    assert cool.evap_htc_mass > warm.evap_htc_mass
+
+
+def test_flow_mode_capped_by_deliverable_vapor():
+    # A tiny fan flow cannot deliver much vapor; production stays bounded by the
+    # saturated vapor mass the fan can carry.
+    fan_flow = 1e-4
+    r = solve_evaporative(_lowtemp(fan_volumetric_flow=fan_flow))
+    deliverable = props.vapor_density(50.0, props.sat_pressure(50.0)) * fan_flow
+    assert r.distillate_rate <= deliverable * 1.001
+
+
+def test_transport_flat_plate_coefficients_positive():
+    from mvr import transport
+    h_m, h_g, diag = transport.surface_transfer_coefficients(
+        velocity=1.0, length=0.5, temp_C=50.0, pressure_pa=13_000.0,
+        density=0.09, gas_cp=1900.0)
+    assert h_m > 0 and h_g > 0
+    assert diag["reynolds"] > 0
+    assert diag["regime"] in ("laminar", "turbulent")
+    # Zero velocity -> no transfer.
+    h_m0, h_g0, _ = transport.surface_transfer_coefficients(
+        0.0, 0.5, 50.0, 13_000.0, 0.09, 1900.0)
+    assert h_m0 == 0.0 and h_g0 == 0.0

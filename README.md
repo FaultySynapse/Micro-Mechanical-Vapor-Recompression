@@ -182,7 +182,41 @@ result of the model, not an assumption baked into it — the mechanism is presen
 and would bite at high pressure ratio / low fan efficiency, and it also correctly
 books the superheat as fan work that ends up needing rejection.
 
-See `mvr/masstransfer.py` for the fully-commented derivation.
+### Transfer coefficients from the fan flow
+
+The mass- and heat-transfer coefficients aren't free inputs — they're set by the
+gas boundary layer, which the **fan-driven sweep velocity** over the surfaces
+creates. With `transfer_from_flow` (on by default) the model computes them from
+the fan flow and channel geometry instead of taking them as given:
+
+```
+sweep velocity  u   = fan_volumetric_flow / (channel cross-section)
+Reynolds        Re  = u · L / ν            (ν, D_AB rise as pressure drops)
+Sherwood        Sh  = 0.664 Re^0.5 Sc^(1/3)   (laminar flat plate)
+h_m = Sh · D_AB / L ,   h_g = Nu · k_gas / L   (Lewis analogy holds automatically)
+```
+
+Because the fan *pressurizes everything it circulates*, the fan power scales
+with that circulated flow — so this closes the loop between the fan, the
+geometry, and the transport rates, and surfaces the core **fan-sizing
+trade-off**: more sweep gives a thinner film (`h_m ∝ √u`) and more production,
+but fan power grows ~linearly with flow. Production therefore rises only as
+~`√(flow)` while cost rises as `flow`, so specific energy has a genuine optimum
+rather than always favoring more fan. Example (50 °C, 6 K lift, 1 kPa NCG):
+
+| fan flow (L/s) | sweep (m/s) | h_m (mm/s) | L/h | fan (W) | kWh/m³ |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2  | 0.17 | 6.3  | 0.43 | 18  | 43  |
+| 10 | 0.83 | 14.2 | 0.91 | 91  | 101 |
+| 40 | 3.33 | 28.4 | 1.65 | 365 | 220 |
+
+The report also shows the sweep velocity, Reynolds number, and the resulting
+coefficients on each surface, and lower-pressure operation helps twice over
+(higher diffusivity **and**, via lower density, higher sweep velocity). Set
+`transfer_from_flow=False` to fall back to fixed `*_mass_transfer_coeff` inputs.
+
+See `mvr/masstransfer.py` and `mvr/transport.py` for the fully-commented
+derivations.
 
 ## Design parameters
 
@@ -259,7 +293,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (38 tests) covers property correlations against reference steam-table
+The suite (49 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -274,10 +308,13 @@ energy; more NCG / slower mass transfer → less production).
   gradients along the plate, no boiling/condensing regime maps. `U` is a design
   input built from constant film coefficients, not computed from flow/geometry.
 - **Ideal-gas vapor**, single isentropic-exponent compression model.
-- **Mass transfer** uses a stagnant-film (Stefan-flow) law with a lumped
-  coefficient and a linear-in-flux form (no high-flux/interfacial-kinetic
-  corrections); NCG is a single specified partial pressure, uniform per chamber,
-  and its parasitic recirculation through the fan is neglected.
+- **Mass transfer** uses a stagnant-film (Stefan-flow) law with a linear-in-flux
+  form (no high-flux/interfacial-kinetic corrections); NCG is a single specified
+  partial pressure, uniform per chamber.
+- **Fan-driven transport** uses flat-plate boundary-layer correlations and a
+  single specified fan circulation flow (a point on the fan curve, not a
+  pressure-vs-flow characteristic); the compression work is applied to the whole
+  circulated flow each pass (free-throttle return, no pressure recovery).
 - **Gas-phase sensible heat** is modeled at the condenser only, as a single-node
   (inlet-superheat) interface energy balance with an NTU desuperheating
   effectiveness — not a zonal desuperheat→condense integration. The evaporator
@@ -300,6 +337,7 @@ capital-cost objectives.
 ```
 mvr/
   properties.py   water/steam thermophysical correlations (pure stdlib)
+  transport.py    gas transport properties + flat-plate transfer correlations
   parameters.py   DesignParameters dataclass + validation
   model.py        boiling (heat-limited) solver + shared stream/energy helper
   masstransfer.py evaporative (mass-transfer-limited) coupled solver
@@ -310,7 +348,7 @@ examples/
   evaporative.py  evaporative: lift budget + NCG purge sweep
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
-tests/            pytest suite (38 tests)
+tests/            pytest suite (49 tests)
 ```
 
 ## License

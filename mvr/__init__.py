@@ -21,6 +21,7 @@ from .masstransfer import (
     htc_from_mass_transfer_coeff,
 )
 from . import properties
+from . import transport
 
 __all__ = [
     "DesignParameters",
@@ -37,6 +38,7 @@ __all__ = [
     "mass_transfer_coeff_from_htc",
     "htc_from_mass_transfer_coeff",
     "properties",
+    "transport",
 ]
 
 __version__ = "0.1.0"

@@ -73,12 +73,30 @@ class DesignParameters:
     #: Condensation surface area, m^2 (defaults to the wall area).
     condenser_area: float = 0.30
     #: Gas-side mass-transfer coefficient over the evaporator surface, m/s.
-    #: Set by the fan-driven vapor velocity; see
-    #: :func:`mvr.masstransfer.mass_transfer_coeff_from_htc` to derive it from a
-    #: convective heat-transfer coefficient via the Chilton-Colburn analogy.
+    #: Used only as a *fallback* when ``transfer_from_flow`` is False; otherwise
+    #: it is computed from the fan-driven surface velocity and channel geometry.
     evap_mass_transfer_coeff: float = 0.020
-    #: Gas-side mass-transfer coefficient over the condensation surface, m/s.
+    #: Gas-side mass-transfer coefficient over the condensation surface, m/s
+    #: (fallback; see ``transfer_from_flow``).
     condenser_mass_transfer_coeff: float = 0.020
+
+    # --- Fan-driven transport (evaporative model) ----------------------------
+    # When enabled, the fan circulates gas over the surfaces; that sweep velocity
+    # sets the boundary-layer transfer coefficients (via flat-plate Sh/Nu
+    # correlations) AND the fan power scales with the circulated flow -- so more
+    # sweep buys better transfer/more production but costs more fan work.
+    #: If True, compute the mass/heat-transfer coefficients from the fan flow and
+    #: channel geometry instead of using the fixed coefficients above.
+    transfer_from_flow: bool = True
+    #: Volumetric gas flow the fan circulates over the surfaces, m^3/s
+    #: (at evaporator inlet conditions). The key fan-sizing design variable.
+    fan_volumetric_flow: float = 0.010
+    #: Flow-direction length of each surface / channel, m (the boundary-layer
+    #: development length). Surface width is implied as area / length.
+    channel_length: float = 0.5
+    #: Vapor-space channel gap above each surface, m (sets the flow cross-section
+    #: width = area/length, height = gap, hence the sweep velocity).
+    channel_gap: float = 0.02
     #: Partial pressure of non-condensable gas (dissolved air/CO2 flashed from
     #: the greywater) in the vapor space, Pa. Blankets the condenser and throttles
     #: both evaporation and condensation; a vent/purge keeps it low. 0 recovers
@@ -148,6 +166,9 @@ class DesignParameters:
             "gas_density": self.gas_density > 0,
             "gas_specific_heat": self.gas_specific_heat > 0,
             "lewis_number": self.lewis_number > 0,
+            "fan_volumetric_flow": self.fan_volumetric_flow > 0,
+            "channel_length": self.channel_length > 0,
+            "channel_gap": self.channel_gap > 0,
         }
         bad = [name for name, ok in checks.items() if not ok]
         if bad:
