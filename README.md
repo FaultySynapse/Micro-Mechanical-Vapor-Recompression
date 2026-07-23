@@ -307,22 +307,33 @@ false-position on the near-linear power curve — so the design spends *exactly*
 the budget. Bounds and the material list are overridable
 (`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run `python examples/optimize_600W.py`.
 
-For the default small unit at **600 W** the optimizer lands on ~**13 L/h**, and
-the design tells a clear story:
+The default bounds keep the **cold-side temperature below 80 °C**; at **600 W**
+the optimizer lands on ~**12.4 L/h**, and the design tells a clear story:
 
 - **Spend the budget on the fan, not the heater.** The optimum runs the fan hard
   enough that its dissipated work covers the losses (makeup heat goes *negative*,
-  ~−190 W surplus), so auxiliary heating adds nothing to flow — it only ever
-  covers unavoidable losses. Keep losses low and drive the fan.
+  a surplus), so auxiliary heating adds nothing to flow — it only ever covers
+  unavoidable losses. Keep losses low and drive the fan.
 - **Size limits bind.** Plate area maxes out, the channel gap goes to its minimum
   (tighter gap → faster sweep → thinner film), and the operating temperature
   runs to its ceiling. If you can build it bigger/hotter, you get more flow.
-- **Material barely matters.** Stainless (12.9 L/h) trails copper (13.2 L/h) by
-  ~2 % despite 24× lower conductivity — the wall resistance is tiny next to the
-  gas/film resistances — so the durable, non-corroding choice is essentially free.
-- **Flow scales sub-linearly with power** (~300 W → 9.5, 600 → 12.9, 900 →
-  14.9 L/h): doubling the budget buys only ~35 % more flow, because production
+- **Material barely matters.** Stainless trails copper by ~2 % despite 24× lower
+  conductivity — the wall resistance is tiny next to the gas/film resistances —
+  so the durable, non-corroding choice is essentially free.
+- **Flow scales sub-linearly with power** (~300 W → 9.5, 600 → 12.4, 900 →
+  ~14 L/h): doubling the budget buys only ~35 % more flow, because production
   rises roughly as `√(fan power)`.
+
+**Cold-side temperature trade-off.** Capping `T_cold` at 80 °C is a *soft*
+compromise — it keeps ~95 % of the flow/efficiency of an 85 °C design. Below
+that the cost is gradual and roughly linear (~0.13 L/h and ~0.9 kWh/m³ per °C),
+and the bottleneck flips from condensation-limited (below ~65 °C) to
+wall-heat-limited above:
+
+| T_cold (°C) | 50 | 60 | 70 | **80** | 85 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| flow (L/h) | 7.8 | 9.3 | 10.7 | **12.2** | 12.9 |
+| kWh/m³ | 77 | 65 | 56 | **49** | 47 |
 
 ## Tests
 
