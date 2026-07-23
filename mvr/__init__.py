@@ -31,6 +31,7 @@ from .masstransfer import (
 from . import properties
 from . import transport
 from . import ncg
+from . import fan
 
 __all__ = [
     "DesignParameters",
@@ -56,6 +57,7 @@ __all__ = [
     "properties",
     "transport",
     "ncg",
+    "fan",
 ]
 
 __version__ = "0.1.0"

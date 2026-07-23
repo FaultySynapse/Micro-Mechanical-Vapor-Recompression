@@ -360,6 +360,19 @@ lower temperature (condensation limited) deeper purging genuinely buys flow. A
 vent placed at the coldest, NCG-richest corner loses far less water than the
 bulk-composition estimate.
 
+### Fan/blower selection (`mvr.fan`)
+
+Dimensionless fan theory characterizes the vapor mover from its *duty* alone.
+`characterize_duty(Q, Δp, ρ)` returns the specific speed, the machine class it
+implies, and the achievable efficiency. The headline result: the still's duty is
+a **high pressure ratio at low flow** (~3–29 kPa at ~12 L/s), so the specific
+speed is tiny (`Ns ≈ 0.006`, and still ~0.06 even at 30 000 rpm) — **this is a
+positive-displacement / regenerative-blower duty, not a fan.** A simple fan or
+axial blower physically cannot make this pressure; you cannot spin into the
+efficient turbomachine regime. The achievable *overall* efficiency (~0.48)
+corresponds to ~0.55 aerodynamic × ~0.85 motor, so it **validates** the model's
+default fan efficiencies rather than contradicting them.
+
 ## Tests
 
 ```bash
@@ -367,7 +380,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (62 tests) covers property correlations against reference steam-table
+The suite (68 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -413,6 +426,7 @@ mvr/
   properties.py   water/steam thermophysical correlations (pure stdlib)
   transport.py    gas transport properties + flat-plate transfer correlations
   ncg.py          non-condensable-gas load from feed + purge cost model
+  fan.py          dimensionless fan/blower selection + efficiency
   parameters.py   DesignParameters dataclass + validation
   model.py        boiling (heat-limited) solver + shared stream/energy helper
   masstransfer.py evaporative (mass-transfer-limited) coupled solver
@@ -425,7 +439,7 @@ examples/
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (62 tests)
+tests/            pytest suite (68 tests)
 ```
 
 ## License
