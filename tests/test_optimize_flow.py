@@ -64,6 +64,21 @@ def test_maximize_flow_respects_budget_and_produces():
     assert params.hx_area == pytest.approx(0.5, abs=1e-3)
 
 
+def test_ceiling_utilization_is_reported_and_consistent():
+    base = _base()
+    params, r, info = maximize_flow(base, budget_w=600.0,
+                                    bounds=_SMALL_BOUNDS, materials=_STAINLESS)
+    # Utilizations are fractions in (0, 1]; production never exceeds a ceiling.
+    assert 0.0 < info["fan_ceiling_use"] <= 1.001
+    assert 0.0 < info["heat_ceiling_use"] <= 1.001
+    # They must reconstruct from the results: use = rate / ceiling.
+    assert info["fan_ceiling_use"] == pytest.approx(
+        r.distillate_rate / r.fan_delivery_ceiling, rel=1e-6)
+    assert info["heat_ceiling_use"] == pytest.approx(
+        r.distillate_rate / r.heat_transfer_ceiling, rel=1e-6)
+    assert info["limiting_mechanism"] == r.limiting_mechanism
+
+
 def test_more_power_budget_yields_more_flow():
     base = _base()
     _, r_low, _ = maximize_flow(base, budget_w=300.0,

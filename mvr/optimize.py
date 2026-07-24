@@ -326,6 +326,14 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
     bleed = best.get("bleed")
     aux = max(result.makeup_heat - (bleed.heat_recovered_w if bleed else 0.0), 0.0) if result else 0.0
     pump = bleed.pump_power_w if bleed else 0.0
+    # Ceiling utilization: how much of each hard limit the winning design spends.
+    # The binding one sits near 100%; the slack one shows where headroom is (e.g.
+    # a fan-throughput-bound design leaves wall-heat area unused).
+    m = result.distillate_rate if result else 0.0
+    heat_ceiling = result.heat_transfer_ceiling if result else float("inf")
+    fan_ceiling = result.fan_delivery_ceiling if result else float("inf")
+    heat_use = m / heat_ceiling if result and heat_ceiling > 0 else 0.0
+    fan_use = m / fan_ceiling if result and fan_ceiling not in (0.0, float("inf")) else 0.0
     info = {
         "material": best.get("material"),
         "net_distillate_lph": best["flow"],
@@ -342,6 +350,9 @@ def maximize_flow(base: DesignParameters, budget_w: float = 600.0,
         "fan_volumetric_flow": best["params"].fan_volumetric_flow if best.get("params") else None,
         "water_lost_pct": (bleed.water_lost_kg_s / result.distillate_rate * 100.0
                            if bleed and result and result.distillate_rate > 0 else 0.0),
+        "limiting_mechanism": result.limiting_mechanism if result else None,
+        "heat_ceiling_use": heat_use,       # fraction of the wall-UA ceiling spent
+        "fan_ceiling_use": fan_use,         # fraction of the fan-delivery ceiling spent
         "budget_w": budget_w,
     }
     return best.get("params"), result, info

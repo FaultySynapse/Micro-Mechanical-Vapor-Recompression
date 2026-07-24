@@ -60,6 +60,27 @@ def main() -> None:
           f"GOR {r.gain_output_ratio:.1f}")
     print()
 
+    # Ceiling utilization: which hard limit the design is pressed against, and
+    # where the slack is.  The binding ceiling sits near 100%; the other shows
+    # unused headroom (so you know whether more flow/power or more area buys output).
+    print("Ceiling utilization (what the winning design is pressed against)")
+    print(f"  fan-delivery ceiling  {info['fan_ceiling_use']*100:5.1f}% used "
+          f"({r.fan_delivery_ceiling*1000:.2f} g/s cap)")
+    print(f"  wall-heat ceiling ... {info['heat_ceiling_use']*100:5.1f}% used "
+          f"({r.heat_transfer_ceiling*1000:.2f} g/s cap)")
+    # Advise off the utilizations, not just the discrete label: when a ceiling is
+    # near 100% that hardware is the lever; when both have slack the gas films
+    # bind (interior root) and sweep/NCG is the lever.
+    top = max(info["fan_ceiling_use"], info["heat_ceiling_use"])
+    if top < 0.85:
+        lever = "sweep flow / lower NCG (mass-transfer-limited; both ceilings have slack)"
+    elif info["fan_ceiling_use"] >= info["heat_ceiling_use"]:
+        lever = "fan flow/power (delivery-bound; wall has slack)"
+    else:
+        lever = "heat-exchange area (wall-bound; fan has slack)"
+    print(f"  -> binding mechanism: {info['limiting_mechanism']};  lever: add {lever}")
+    print()
+
     # Vessel spec: the shell must contain the condenser (highest) pressure; the
     # design gauge carries a sizing margin.  Positive gauge => the bleed
     # self-vents (no vacuum pump); sub-atmospheric => vacuum service.
