@@ -98,9 +98,14 @@ class DesignParameters:
     #: width = area/length, height = gap, hence the sweep velocity).
     channel_gap: float = 0.02
     #: Partial pressure of non-condensable gas (dissolved air/CO2 flashed from
-    #: the greywater) in the vapor space, Pa. Blankets the condenser and throttles
-    #: both evaporation and condensation; a vent/purge keeps it low. 0 recovers
-    #: the pure-vapor, heat-transfer-limited (boiling) result.
+    #: the greywater), Pa, referenced to the phase-change *surface* (where the
+    #: water vapor is saturated): the chamber total pressure is
+    #: ``P_sat(T_surface) + noncondensable_pressure``. By Dalton's law the total
+    #: is uniform but the composition is not -- in the bulk, mass transfer has
+    #: depleted the water vapor, so the NCG partial there is *higher* than this
+    #: surface value. The NCG blankets the condenser and throttles both surfaces;
+    #: a vent/purge keeps it low, and 0 recovers the pure-vapor, heat-transfer-
+    #: limited (boiling) result.
     noncondensable_pressure: float = 500.0
 
     # --- Gas-phase sensible heat transfer (evaporative model) ----------------
