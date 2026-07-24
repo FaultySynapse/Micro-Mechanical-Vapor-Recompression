@@ -34,6 +34,25 @@ def test_efficiency_peaks_in_midrange_and_floors_low():
     assert low == pytest.approx(0.48, abs=0.02)
 
 
+def test_efficiency_headroom_flags_ceiling_for_micro_mvr_duty():
+    # The micro-MVR duty (high dp, low Q) is PD-floored; a model already
+    # assuming ~0.47 overall is at the ceiling -> no fan-choice gain.
+    hr = fan.efficiency_headroom(0.008, 34_000.0, 0.42, assumed_overall_eff=0.4675)
+    assert hr["specific_speed"] < 0.3
+    assert hr["achievable_overall_efficiency"] == pytest.approx(0.48, abs=0.02)
+    assert hr["relative_gain"] < 0.05
+    assert hr["at_efficiency_ceiling"] is True
+
+
+def test_efficiency_headroom_finds_gain_for_mismatched_blower():
+    # A duty that could reach mid-Ns high efficiency but is run at a poor assumed
+    # efficiency has real headroom -> a better-matched blower helps.
+    hr = fan.efficiency_headroom(0.5, 1_000.0, 1.2, assumed_overall_eff=0.40)
+    assert hr["achievable_overall_efficiency"] > 0.40
+    assert hr["relative_gain"] > 0.05
+    assert hr["at_efficiency_ceiling"] is False
+
+
 def test_characterize_duty_reports_blower_for_still():
     d = fan.characterize_duty(0.012, 29_000.0, 0.29, speed_rpm=3000.0, diameter_m=0.08)
     assert d["specific_speed"] < 0.1

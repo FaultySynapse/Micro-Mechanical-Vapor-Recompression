@@ -71,6 +71,51 @@ def achievable_efficiency(specific_speed_value: float) -> float:
     return max(turbo, pd_floor)
 
 
+def efficiency_headroom(flow_m3s: float, pressure_rise_pa: float,
+                        gas_density: float, assumed_overall_eff: float,
+                        speed_rpm_band=(3_000.0, 30_000.0),
+                        samples: int = 7) -> dict:
+    """Is a fan-delivery-bound design leaving efficiency on the table?
+
+    When the fan-delivery ceiling binds, "add fan power" is trivially true and
+    unhelpful.  The useful question is whether a *better-matched blower* could
+    deliver more air power (Q·Δp) for the same electrical watts -- i.e. whether
+    the assumed efficiency is below the best achievable at this duty.
+
+    Distillate at a fixed power budget tracks the delivered air power
+    ``eff * P_electrical``, so the achievable relative gain from re-matching is
+    just ``headroom / assumed_eff``.  Specific speed scales with shaft speed, so
+    the best achievable efficiency is taken as the max over a plausible speed
+    band (a micro-MVR's high-pressure/low-flow duty stays low-Ns -- PD/blower
+    territory -- across any sane speed, so the verdict is robust to the exact
+    rpm).  ``headroom <= ~0`` means the design is already at the efficiency
+    ceiling: the delivery limit is a genuine power/duty limit, not a fan-choice
+    one.
+    """
+    lo, hi = speed_rpm_band
+    best_ns = 0.0
+    best_eff = 0.0
+    for i in range(samples):
+        rpm = lo * (hi / lo) ** (i / (samples - 1)) if samples > 1 else lo
+        ns = specific_speed(flow_m3s, pressure_rise_pa, gas_density, rpm)
+        eff = achievable_efficiency(ns)
+        if eff > best_eff:
+            best_eff, best_ns = eff, ns
+    headroom = best_eff - assumed_overall_eff
+    relative_gain = headroom / assumed_overall_eff if assumed_overall_eff > 0 else 0.0
+    return {
+        "specific_speed": best_ns,
+        "machine": recommended_machine(best_ns),
+        "assumed_overall_efficiency": assumed_overall_eff,
+        "achievable_overall_efficiency": best_eff,
+        "headroom": headroom,
+        "relative_gain": relative_gain,
+        # A sub-5% re-match gain is negligible next to the power lever (output
+        # tracks eff*power identically), so treat it as "at the ceiling".
+        "at_efficiency_ceiling": relative_gain <= 0.05,
+    }
+
+
 # --- A representative dimensionless characteristic (for off-design) -----------
 # Backward-curved blower: falling head with flow, efficiency peaking at a
 # best-efficiency flow coefficient.  Normalized so phi/phi_bep = 1 is the BEP.

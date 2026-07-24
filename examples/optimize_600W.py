@@ -14,7 +14,8 @@ from dataclasses import replace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mvr import DesignParameters
+from mvr import DesignParameters, fan
+from mvr import properties as props
 from mvr.optimize import maximize_flow, WALL_MATERIALS, DEFAULT_BOUNDS
 from mvr.masstransfer import balance_temperature_by_economizer, vessel_pressure_spec
 
@@ -80,6 +81,30 @@ def main() -> None:
         lever = "heat-exchange area (wall-bound; fan has slack)"
     print(f"  -> binding mechanism: {info['limiting_mechanism']};  lever: add {lever}")
     print()
+
+    # When delivery-bound, "add fan power" is trivially true; the useful question
+    # is whether a better-matched blower gives more air power per watt, or the
+    # design is already at the efficiency ceiling (so only power / a cheaper duty
+    # helps).  Air power = Q*dP at the operating point; efficiency headroom vs the
+    # duty's specific speed answers it.
+    if info["fan_ceiling_use"] >= max(info["heat_ceiling_use"], 0.85):
+        p_evap_tot = r.evap_total_pressure_pa
+        dp_pa = (r.cond_total_pressure_pa + params.duct_pressure_drop_pa) - p_evap_tot
+        rho = props.vapor_density(r.evap_temp_C, p_evap_tot)
+        hr = fan.efficiency_headroom(info["fan_volumetric_flow"], dp_pa, rho,
+                                     info["efficiency"])
+        print("Fan-delivery diagnosis (is it the curve, or just power?)")
+        print(f"  duty specific speed . {hr['specific_speed']:.3f} -> {hr['machine']}")
+        print(f"  assumed / achievable  {hr['assumed_overall_efficiency']:.2f} / "
+              f"{hr['achievable_overall_efficiency']:.2f} overall efficiency")
+        if hr["at_efficiency_ceiling"]:
+            print(f"  -> at the efficiency ceiling for this duty class: a different fan")
+            print(f"     curve won't help.  More output needs more POWER, or a cheaper")
+            print(f"     duty (hotter vapor = denser sweep; lower NCG/lift = less dP).")
+        else:
+            print(f"  -> {hr['relative_gain']*100:.0f}% more air power (hence flow) is available")
+            print(f"     from a better-matched blower at the same {info['blower_power_w']:.0f} W.")
+        print()
 
     # Vessel spec: the shell must contain the condenser (highest) pressure; the
     # design gauge carries a sizing margin.  Positive gauge => the bleed
