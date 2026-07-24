@@ -100,20 +100,22 @@ def main() -> None:
         print(f"  {budget:6.0f} W -> {ib['net_distillate_lph']:6.2f} L/h")
     print()
 
-    # Cold-side temperature trade-off: the design goal keeps T_cold < 80 C, but
-    # this shows what running hotter or colder would cost/buy at 600 W.
-    print("Cold-side temperature trade-off (everything else optimized, 600 W):")
-    print(f"  {'T_cold C':>8} | {'L/h':>6} | {'kWh/m3':>7} | {'GOR':>5} | {'limited by':>12}")
+    # Temperature trade-off: higher T improves both flow and efficiency; ~90 C is
+    # the sweet spot where the condenser rises above atmospheric and the bleed
+    # self-vents.  Above ~100 C the evaporator too goes positive (pressure vessel).
+    print("Operating-temperature trade-off (everything else optimized, 600 W):")
+    print(f"  {'T C':>4} | {'L/h':>6} | {'kWh/m3':>7} | {'GOR':>5} | {'self-vent':>9} | {'limited by':>12}")
     bounds_no_temp = {k: v for k, v in DEFAULT_BOUNDS.items() if k != "evaporator_temp_C"}
     stainless = {"stainless_steel": WALL_MATERIALS["stainless_steel"]}
-    for t_cold in (50.0, 60.0, 70.0, 80.0, 85.0):
-        b = replace(base, evaporator_temp_C=t_cold)
+    for t_op in (60.0, 70.0, 80.0, 90.0, 100.0):
+        b = replace(base, evaporator_temp_C=t_op)
         _, rt, _ = maximize_flow(b, budget_w=600.0, bounds=bounds_no_temp,
                                  materials=stainless)
-        flag = "  <- cap" if t_cold == 80.0 else ""
-        print(f"  {t_cold:8.0f} | {rt.distillate_lph:6.2f} | "
+        sv = "yes" if rt.cond_total_pressure_pa >= 101_325.0 else "no"
+        flag = "  <- cap" if t_op == 90.0 else ""
+        print(f"  {t_op:4.0f} | {rt.distillate_lph:6.2f} | "
               f"{rt.specific_energy_kwh_per_l*1000:7.1f} | {rt.gain_output_ratio:5.1f} | "
-              f"{rt.limiting_mechanism:>12}{flag}")
+              f"{sv:>9} | {rt.limiting_mechanism:>12}{flag}")
 
 
 if __name__ == "__main__":

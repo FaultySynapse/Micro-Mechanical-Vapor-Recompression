@@ -130,7 +130,7 @@ WALL_MATERIALS = {
 DEFAULT_BOUNDS = {
     "plate_area": (0.05, 0.60),               # m^2   (size limit)
     "fan_volumetric_flow": (0.003, 0.05),     # m^3/s (blower operating flow)
-    "evaporator_temp_C": (35.0, 80.0),        # C     (cold-side kept below 80 C)
+    "evaporator_temp_C": (35.0, 90.0),        # C     (cap: condenser self-vents ~90 C)
     "channel_gap": (0.005, 0.040),            # m     (size limit)
     "channel_length": (0.20, 1.00),           # m     (size limit)
     "insulation_ua": (0.03, 0.50),            # W/K   (better insulation costs size)

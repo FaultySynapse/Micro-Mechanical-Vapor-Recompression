@@ -311,34 +311,37 @@ along the budget (fan + auxiliary heating). Bounds and the material list are
 overridable (`DEFAULT_BOUNDS`, `WALL_MATERIALS`). Run
 `python examples/optimize_600W.py`.
 
-The default bounds keep the **cold-side temperature below 80 °C**; at **600 W**
-the optimizer lands on ~**11.3 L/h** (~11.6 with copper), with the blower drawing
-the full budget at a derived ~10.5 K lift. The design tells a clear story:
+The default bounds cap the **operating temperature at 90 °C**; at **600 W** the
+optimizer lands on ~**12.9 L/h** (copper), self-venting the bleed. The design
+tells a clear story:
 
 - **Spend the budget on the fan, not the heater.** The optimum runs the fan hard
   enough that its dissipated work covers the losses (makeup heat goes *negative*,
   a surplus), so auxiliary heating adds nothing to flow — it only ever covers
   unavoidable losses. Keep losses low and drive the fan.
-- **Size limits bind.** Plate area maxes out, the channel gap goes to its minimum
-  (tighter gap → faster sweep → thinner film), and the operating temperature
-  runs to its ceiling. If you can build it bigger/hotter, you get more flow.
+- **Size and temperature limits bind.** Plate area maxes out, the channel gap
+  goes to its minimum (tighter gap → faster sweep → thinner film), and the
+  temperature runs to its 90 °C cap. Temperature is the steepest lever of all
+  (elasticity ~1.5) — see below.
 - **Material barely matters.** Stainless trails copper by ~2 % despite 24× lower
   conductivity — the wall resistance is tiny next to the gas/film resistances —
   so the durable, non-corroding choice is essentially free.
-- **Flow scales sub-linearly with power** (~300 W → 8.6, 600 → 11.3, 900 →
-  13.2 L/h): doubling the budget buys only ~35 % more flow, because production
-  rises roughly as `√(fan power)`.
+- **Flow scales sub-linearly with power** (~√ of fan power): doubling the budget
+  buys only ~35 % more flow.
 
-**Cold-side temperature trade-off.** Capping `T_cold` at 80 °C is a *soft*
-compromise — it keeps ~95 % of the flow/efficiency of an 85 °C design. Below
-that the cost is gradual and roughly linear (~0.14 L/h and ~1 kWh/m³ per °C),
-and the bottleneck flips from condensation-limited (below ~65 °C) to
-wall-heat-limited above:
+**Temperature is the biggest lever — and ~90 °C is a sweet spot.** Higher
+temperature improves *both* production and efficiency monotonically (no
+thermodynamic peak); the limits are two atmospheric crossings. At **~90 °C the
+condenser rises just above atmospheric**, so the NCG bleed **self-vents** — the
+vacuum vent pump disappears — while the evaporator stays under gentle vacuum so
+the feed still self-draws. Beyond ~100 °C the evaporator too goes positive and
+you need a pressure vessel (and the boiling model).
 
-| T_cold (°C) | 50 | 60 | 70 | **80** | 85 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| flow (L/h) | 7.1 | 8.5 | 9.9 | **11.3** | 12.0 |
-| kWh/m³ | 84 | 70 | 60 | **53** | 50 |
+| T (°C) | 60 | 70 | 80 | **90** | 100 | 105 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| net flow (L/h) | 8.5 | 9.9 | 11.2 | **12.9** | 13.8 | 14.4 |
+| kWh/m³ | 70 | 60 | 53 | **46** | 43 | 41 |
+| bleed self-vents | no | no | no | **yes** | yes | yes |
 
 ### Temperature control (economizer bypass)
 
@@ -350,14 +353,13 @@ destabilizing — so the practical actuator is **detuning the economizer**: a
 bypass solenoid, or biasing the hot side so the clean output leaves warmer, which
 recovers less heat and sheds the surplus into the streams (10–70 W/K of
 authority). `balance_temperature_by_economizer(params)` assumes that controller
-and returns the **nominal setting for sizing**. For the 600 W / 80 °C design:
+and returns the **nominal setting for sizing**. For the 600 W / 90 °C design:
 
 | quantity | value |
 | --- | --- |
-| heat to reject | ~250 W (≈ scales with fan power, not insulation) |
-| economizer effectiveness | 0.85 → **0.73** (~14 % bypass) |
-| feed pre-heat | 74.6 → 66.9 °C |
-| clean-output exit temp | ~37 °C (warmer, carries the surplus out) |
+| heat to reject | ~160 W (≈ scales with fan power, not insulation) |
+| economizer effectiveness | 0.85 → **0.79** (~7 % bypass) |
+| clean-output exit temp | ~36 °C (warmer, carries the surplus out) |
 
 The reject duty and bypass track the fan power (≈3 % bypass at 300 W, ~22 % at
 900 W) and are essentially independent of insulation — confirming the surplus is
@@ -367,7 +369,7 @@ fan-work driven, not loss driven.
 
 `flow_sensitivity` returns the elasticity of budget-constrained flow to each
 parameter (`d ln flow / d ln param`), so you can see where extra hardware pays
-off. At the 80 °C / 600 W optimum the design is **balanced**: every surface has a
+off. At the 90 °C / 600 W optimum the design is **balanced**: every surface has a
 similar, moderate elasticity (~0.16) and none dominates, while **wall
 conductivity is ~0** (material choice is irrelevant for a flat divider).
 Increasing all surfaces *together* (a bigger/denser plate) is the real lever
