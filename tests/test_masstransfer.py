@@ -33,7 +33,8 @@ def test_runs_and_is_sane():
     assert r.distillate_rate > 0
     assert r.cond_surface_temp_C > r.evap_temp_C          # wall must run "uphill"
     assert 0.0 < r.mass_transfer_effectiveness <= 1.0
-    assert r.limiting_mechanism in ("evaporation", "condensation", "wall-heat")
+    assert r.limiting_mechanism in (
+        "evaporation", "condensation", "wall-heat", "fan-throughput")
 
 
 def test_film_flow_zero_and_infinite_limits():
@@ -58,6 +59,38 @@ def test_recovers_heat_limit_when_ncg_zero_and_mt_fast():
     assert r_evap.mass_transfer_effectiveness > 0.98
     assert r_evap.distillate_rate == pytest.approx(r_boil.distillate_rate, rel=0.02)
     assert r_evap.limiting_mechanism == "wall-heat"
+
+
+def test_fan_throughput_binds_when_delivery_ceiling_is_lowest():
+    # A generous wall + fast films but a small fan: production is capped by what
+    # the fan can carry, not by heat transfer or the gas films.
+    p = _lowtemp(evaporator_temp_C=90.0, temp_lift=8.0,
+                 noncondensable_pressure=200.0, hx_area=0.5,
+                 evap_area=0.5, condenser_area=0.5,
+                 fan_volumetric_flow=0.004, channel_gap=0.005, channel_length=0.5)
+    r = solve_evaporative(p)
+    assert r.limiting_mechanism == "fan-throughput"
+    # The reported binding constraint must match the actual lowest ceiling.
+    assert r.fan_delivery_ceiling < r.heat_transfer_ceiling
+    # And production sits right at that ceiling (within the solver bracket).
+    assert r.distillate_rate == pytest.approx(r.fan_delivery_ceiling, rel=0.02)
+
+
+def test_ceilings_are_ordered_and_bound_production():
+    # Production can never exceed either hard ceiling, in any regime.
+    for kw in (dict(), dict(noncondensable_pressure=4000.0),
+               dict(fan_volumetric_flow=0.03), dict(hx_area=0.1)):
+        r = solve_evaporative(_lowtemp(**kw))
+        assert r.distillate_rate <= r.heat_transfer_ceiling * 1.001
+        assert r.distillate_rate <= r.fan_delivery_ceiling * 1.001
+
+
+def test_fixed_coeff_mode_has_no_delivery_ceiling():
+    # Without a fan-flow model there is no throughput limit: the delivery ceiling
+    # is infinite and can never be the binding constraint.
+    r = solve_evaporative(_fixed_coeff())
+    assert math.isinf(r.fan_delivery_ceiling)
+    assert r.limiting_mechanism != "fan-throughput"
 
 
 def test_compression_superheat_is_positive_and_grows_with_ratio():

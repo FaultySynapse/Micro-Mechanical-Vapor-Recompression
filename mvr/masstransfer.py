@@ -67,7 +67,9 @@ class EvaporativeResults:
     distillate_lph: float
     heat_limited_rate: float         # kg/s if mass transfer were infinite
     mass_transfer_effectiveness: float   # actual / heat-limited (0..1)
-    limiting_mechanism: str          # "evaporation" | "condensation" | "wall-heat"
+    limiting_mechanism: str          # "evaporation"|"condensation"|"wall-heat"|"fan-throughput"
+    heat_transfer_ceiling: float     # kg/s the wall UA can condense at full lift
+    fan_delivery_ceiling: float      # kg/s the fan can carry (inf if not flow-mode)
 
     # Gas-phase sensible heat transfer at the condenser
     discharge_temp_C: float          # superheated vapor leaving the fan
@@ -286,14 +288,19 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
         num = UA * t_evap + m_dot * h_fg + cap * discharge_C
         return num / (UA + cap)
 
-    # Upper bracket on m_dot: the wall cannot push the condensation interface
-    # above the condenser saturation temperature, and (flow mode) the fan cannot
-    # deliver more vapor than it circulates.
+    # Upper bracket on m_dot: two hard ceilings cap production regardless of how
+    # fast the gas films can move vapor.
+    #   * heat-transfer ceiling: the wall cannot push the condensation interface
+    #     above the condenser saturation temperature (UA * dT_max / h_fg).
+    #   * fan-delivery ceiling: in flow mode the fan cannot carry more vapor than
+    #     it sweeps (rho_sat * volumetric flow); infinite otherwise.
+    # The binding one sets the bracket; which of the three (either ceiling, or an
+    # interior mass-transfer equilibrium) actually holds is classified below.
     t_surf_ceiling = props.sat_temperature(p_cond_tot)
-    m_dot_ceiling = UA * (t_surf_ceiling - t_evap) / h_fg
-    if p.transfer_from_flow:
-        deliverable = props.vapor_density(t_evap, p_sat_evap) * p.fan_volumetric_flow
-        m_dot_ceiling = min(m_dot_ceiling, deliverable)
+    m_heat_ceiling = UA * (t_surf_ceiling - t_evap) / h_fg
+    m_deliver_ceiling = (props.vapor_density(t_evap, p_sat_evap) * p.fan_volumetric_flow
+                         if p.transfer_from_flow else math.inf)
+    m_dot_ceiling = min(m_heat_ceiling, m_deliver_ceiling)
     m_dot_max = max(m_dot_ceiling, 1e-9) * 0.999
 
     def residual(m_dot: float) -> float:
@@ -334,13 +341,23 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     lift_effective = tb_cond - tb_evap              # sat-temp lift the fan delivers
     lift_ncg = max(p.temp_lift - lift_effective, 0.0)
 
-    # Which resistance binds?  Compare each "spent" lift to the nominal.
-    mechanisms = {
-        "evaporation": lift_evap,
-        "condensation": lift_cond,
-        "wall-heat": lift_wall,
-    }
-    limiting_mechanism = max(mechanisms, key=mechanisms.get)
+    # Which constraint actually binds at the solved point?
+    #
+    # The solve terminates one of two ways.  If the pressure-matching residual is
+    # still negative at the ceiling, the mass-transfer equilibrium *wants* more
+    # vapor than a hard ceiling allows -> the ceiling binds, and it is whichever
+    # ceiling is lower (fan delivery vs wall heat).  Otherwise the root is
+    # interior -> the gas-film mass transfer itself binds, and the dominant film
+    # is whichever "spends" more lift (evaporation vs condensation).  The old
+    # scheme just reported the biggest lift bucket, which is nearly always the
+    # useful wall dT and so hid the real limiter (typically fan throughput).
+    ceiling_binds = residual(m_dot_max) < 0.0
+    if ceiling_binds:
+        limiting_mechanism = ("fan-throughput"
+                              if m_deliver_ceiling < m_heat_ceiling
+                              else "wall-heat")
+    else:
+        limiting_mechanism = "evaporation" if lift_evap >= lift_cond else "condensation"
 
     heat_limited_rate = UA * p.temp_lift / h_fg
     mt_effectiveness = m_dot / heat_limited_rate if heat_limited_rate > 0 else 0.0
@@ -386,6 +403,8 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
         heat_limited_rate=heat_limited_rate,
         mass_transfer_effectiveness=mt_effectiveness,
         limiting_mechanism=limiting_mechanism,
+        heat_transfer_ceiling=m_heat_ceiling,
+        fan_delivery_ceiling=m_deliver_ceiling,
         discharge_temp_C=discharge_C,
         condenser_superheat_K=superheat,
         desuperheat_effectiveness=eff_ds,
@@ -421,6 +440,11 @@ def solve_evaporative(p: DesignParameters) -> EvaporativeResults:
     )
 
 
+def _fmt_ceiling(rate: float) -> str:
+    """Format a mass-flow ceiling, showing 'n/a' for the infinite (no-limit) case."""
+    return "     n/a" if math.isinf(rate) else f"{rate*1000:8.3f} g/s"
+
+
 def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
     """Human-readable summary of an evaporative operating point."""
     heater_note = "external heating" if r.makeup_heat >= 0 else "surplus / needs cooling"
@@ -439,9 +463,10 @@ def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
         "",
         " Production & limiting mechanism",
         f"   distillate rate ........... {r.distillate_rate*1000:8.3f} g/s  ({r.distillate_lph:.2f} L/h)",
-        f"   heat-transfer limit ....... {r.heat_limited_rate*1000:8.3f} g/s",
-        f"   mass-transfer effectiveness {r.mass_transfer_effectiveness*100:7.1f} %",
-        f"   limiting resistance ....... {r.limiting_mechanism:>8}",
+        f"   heat-transfer ceiling ..... {r.heat_transfer_ceiling*1000:8.3f} g/s  (wall UA at full lift)",
+        f"   fan-delivery ceiling ...... {_fmt_ceiling(r.fan_delivery_ceiling)}  (fan sweep throughput)",
+        f"   mass-transfer effectiveness {r.mass_transfer_effectiveness*100:7.1f} %  (vs nominal-lift heat limit)",
+        f"   binding constraint ........ {r.limiting_mechanism:>14}",
         "",
         " Compression-lift budget (K)",
         f"   nominal lift .............. {r.lift_nominal:8.3f}",
