@@ -483,6 +483,67 @@ def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
     return "\n".join(lines)
 
 
+# --- Vessel pressure spec (sizing) -------------------------------------------
+
+
+@dataclass
+class VesselSpec:
+    """Pressure-containment spec for the chamber, derived from an operating point.
+
+    The two chambers share one shell; the condenser side sits at the highest
+    pressure and the evaporator at the lowest, so the shell must contain the
+    condenser total pressure against ambient (positive gauge = pressure service)
+    and resist collapse when the evaporator runs sub-atmospheric (vacuum
+    service).  ``design_gauge_pressure_pa`` adds a sizing margin over the worst
+    operating gauge for the relief-valve set point / wall thickness.
+    """
+
+    max_abs_pressure_pa: float        # highest absolute pressure (condenser)
+    min_abs_pressure_pa: float        # lowest absolute pressure (evaporator)
+    gauge_pressure_pa: float          # max_abs - ambient (shell load, >=0)
+    vacuum_gauge_pressure_pa: float   # ambient - min_abs (collapse load, >=0)
+    service: str                      # "pressure" | "vacuum" | "atmospheric"
+    design_gauge_pressure_pa: float   # gauge with margin (relief set point)
+    saturation_temp_C: float          # T_sat at max pressure (relief context)
+    self_venting: bool                # condenser >= ambient -> bleed self-vents
+
+
+def vessel_pressure_spec(r: EvaporativeResults, ambient_pa: float = 101_325.0,
+                         margin_frac: float = 0.10,
+                         margin_floor_pa: float = 50_000.0) -> VesselSpec:
+    """Containment spec from an :class:`EvaporativeResults` operating point.
+
+    The design gauge pressure follows the usual pressure-vessel rule of the
+    larger of a fractional margin and an absolute floor over the operating gauge
+    (defaults: +10% or +50 kPa).  ``self_venting`` flags the happy regime where
+    the condenser sits at or above atmospheric, so the non-condensable bleed
+    pushes itself out with no vacuum pump.
+    """
+    p_hi = r.cond_total_pressure_pa
+    p_lo = r.evap_total_pressure_pa
+    gauge = max(p_hi - ambient_pa, 0.0)
+    vac = max(ambient_pa - p_lo, 0.0)
+    if gauge > 0.0:
+        service = "pressure"
+        design_gauge = max(gauge * (1.0 + margin_frac), gauge + margin_floor_pa)
+    elif vac > 0.0:
+        service = "vacuum"
+        design_gauge = 0.0            # full-vacuum rating; no positive set point
+    else:
+        service = "atmospheric"
+        design_gauge = margin_floor_pa
+    return VesselSpec(
+        max_abs_pressure_pa=p_hi,
+        min_abs_pressure_pa=p_lo,
+        gauge_pressure_pa=gauge,
+        vacuum_gauge_pressure_pa=vac,
+        service=service,
+        design_gauge_pressure_pa=design_gauge,
+        saturation_temp_C=props.sat_temperature(p_hi),
+        self_venting=p_hi >= ambient_pa,
+    )
+
+
 # --- Temperature control by economizer bypass --------------------------------
 
 

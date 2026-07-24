@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mvr import DesignParameters
 from mvr.optimize import maximize_flow, WALL_MATERIALS, DEFAULT_BOUNDS
-from mvr.masstransfer import balance_temperature_by_economizer
+from mvr.masstransfer import balance_temperature_by_economizer, vessel_pressure_spec
 
 BUDGET_W = 600.0
 
@@ -58,6 +58,23 @@ def main() -> None:
     print(f"  sweep velocity ...... {r.evap_velocity:.2f} m/s (Re {r.evap_reynolds:.0f})")
     print(f"  specific energy ..... {r.specific_energy_kwh_per_l*1000:.1f} kWh/m^3, "
           f"GOR {r.gain_output_ratio:.1f}")
+    print()
+
+    # Vessel spec: the shell must contain the condenser (highest) pressure; the
+    # design gauge carries a sizing margin.  Positive gauge => the bleed
+    # self-vents (no vacuum pump); sub-atmospheric => vacuum service.
+    vs = vessel_pressure_spec(r)
+    print("Vessel pressure spec (containment sizing)")
+    print(f"  service ............. {vs.service} "
+          f"({'self-venting' if vs.self_venting else 'needs vacuum pump'})")
+    print(f"  evap / cond abs ..... {vs.min_abs_pressure_pa/1e5:.3f} / "
+          f"{vs.max_abs_pressure_pa/1e5:.3f} bar-abs")
+    if vs.service == "vacuum":
+        print(f"  vacuum load ......... {vs.vacuum_gauge_pressure_pa/1e5:.3f} bar below ambient")
+    else:
+        print(f"  operating gauge ..... {vs.gauge_pressure_pa/1e5:.3f} bar-g")
+    print(f"  design gauge ........ {vs.design_gauge_pressure_pa/1e5:.3f} bar-g (with margin)")
+    print(f"  T_sat at max press .. {vs.saturation_temp_C:.1f} C")
     print()
 
     # Temperature controller: the fan work exceeds losses (a surplus), so the
