@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mvr import DesignParameters
 from mvr.optimize import maximize_flow, WALL_MATERIALS, DEFAULT_BOUNDS
+from mvr.masstransfer import balance_temperature_by_economizer
 
 BUDGET_W = 600.0
 
@@ -58,6 +59,18 @@ def main() -> None:
     print(f"  specific energy ..... {r.specific_energy_kwh_per_l*1000:.1f} kWh/m^3, "
           f"GOR {r.gain_output_ratio:.1f}")
     print()
+
+    # Temperature controller: the fan work exceeds losses (a surplus), so the
+    # controller detunes the economizer to reject it and hold temperature.
+    tc = balance_temperature_by_economizer(params)
+    if tc.mode == "reject-surplus":
+        print("Temperature control (economizer-bypass to hold T, sizing)")
+        print(f"  heat to reject ...... {tc.heat_to_reject_w:.0f} W")
+        print(f"  economizer eff ...... {tc.design_effectiveness:.2f} -> {tc.balanced_effectiveness:.2f} "
+              f"({tc.bypass_fraction*100:.0f}% bypass)")
+        print(f"  feed preheat ........ {tc.feed_preheat_temp_C:.1f} C")
+        print(f"  clean output temp ... {tc.clean_output_temp_C:.1f} C")
+        print()
 
     # Bleed recovery: route the vent through a feed-cooled condenser to recover
     # its steam (back to product) and heat, and shrink the vent pump load.

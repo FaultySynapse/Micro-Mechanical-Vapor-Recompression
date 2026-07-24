@@ -483,6 +483,79 @@ def report_evaporative(p: DesignParameters, r: EvaporativeResults) -> str:
     return "\n".join(lines)
 
 
+# --- Temperature control by economizer bypass --------------------------------
+
+
+@dataclass
+class ThermalControl:
+    """Nominal setting of the temperature controller (economizer bypass).
+
+    When the fan work exceeds the losses (a surplus, ``makeup < 0``) the unit
+    would run hot; a controller rejects the surplus by *detuning the economizer*
+    -- opening a bypass solenoid, or biasing the hot side so the clean output
+    leaves warmer -- so less heat is recovered and more leaves with the streams.
+    """
+
+    mode: str                       # "reject-surplus" | "needs-heating" | "balanced"
+    heat_to_reject_w: float         # surplus the controller must shed (0 if none)
+    design_effectiveness: float     # the economizer's full-recovery value
+    balanced_effectiveness: float   # effective value the controller settles at
+    bypass_fraction: float          # 1 - balanced/design (fraction detuned)
+    feed_preheat_temp_C: float      # feed inlet temp after the (detuned) economizer
+    clean_output_temp_C: float      # product exit temp (hotter when rejecting heat)
+    residual_makeup_w: float        # leftover imbalance (~0 when controllable)
+
+
+def balance_temperature_by_economizer(p: DesignParameters,
+                                      min_effectiveness: float = 0.02) -> ThermalControl:
+    """Find the economizer setting that holds the target temperature (makeup=0).
+
+    Assumes a controller that trims the feed-HX effectiveness to reject any
+    surplus (or leaves it at full recovery and flags that heating is needed).
+    Returns the nominal :class:`ThermalControl` settings for sizing the bypass.
+    """
+    design_eff = p.feed_hx_effectiveness
+    full = solve_evaporative(p)
+
+    def makeup_at(eff: float) -> float:
+        return solve_evaporative(replace(p, feed_hx_effectiveness=max(eff, 1e-4))).makeup_heat
+
+    if full.makeup_heat >= 0.0:
+        # No surplus: the controller keeps full recovery (and may need heating).
+        eff_star = design_eff
+        mode = "balanced" if full.makeup_heat < 1.0 else "needs-heating"
+        r = full
+    else:
+        # Surplus: makeup rises as effectiveness falls; find the zero crossing.
+        lo, hi = min_effectiveness, design_eff
+        if makeup_at(lo) < 0.0:
+            eff_star = lo                       # even full bypass can't shed it all
+        else:
+            for _ in range(50):
+                mid = 0.5 * (lo + hi)
+                if makeup_at(mid) < 0.0:
+                    hi = mid
+                else:
+                    lo = mid
+            eff_star = 0.5 * (lo + hi)
+        r = solve_evaporative(replace(p, feed_hx_effectiveness=eff_star))
+        mode = "reject-surplus"
+
+    hot_inlet = ((r.distillate_rate * r.cond_surface_temp_C
+                  + r.concentrate_rate * r.evap_temp_C) / r.feed_rate)
+    clean_output = hot_inlet - eff_star * (hot_inlet - p.feed_temp_C)
+    return ThermalControl(
+        mode=mode,
+        heat_to_reject_w=max(-full.makeup_heat, 0.0),
+        design_effectiveness=design_eff,
+        balanced_effectiveness=eff_star,
+        bypass_fraction=max(1.0 - eff_star / design_eff, 0.0) if design_eff > 0 else 0.0,
+        feed_preheat_temp_C=r.feed_preheat_temp_C,
+        clean_output_temp_C=clean_output,
+        residual_makeup_w=r.makeup_heat,
+    )
+
+
 # --- Blower-coupled operating point ------------------------------------------
 #
 # The fan curve, not the designer, sets the flow<->lift relation: at a given

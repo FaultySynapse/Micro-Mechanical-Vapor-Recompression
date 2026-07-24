@@ -340,6 +340,29 @@ wall-heat-limited above:
 | flow (L/h) | 7.1 | 8.5 | 9.9 | **11.3** | 12.0 |
 | kWh/m³ | 84 | 70 | 60 | **53** | 50 |
 
+### Temperature control (economizer bypass)
+
+At the optimum the fan work exceeds the losses (`makeup_heat < 0`, a surplus), so
+the unit would run hot; something has to *reject* heat to hold the temperature.
+The insulation can't do it (a well-insulated shell couples to ambient at only
+~0.2 W/K), and the economizer at full effectiveness is even slightly
+destabilizing — so the practical actuator is **detuning the economizer**: a
+bypass solenoid, or biasing the hot side so the clean output leaves warmer, which
+recovers less heat and sheds the surplus into the streams (10–70 W/K of
+authority). `balance_temperature_by_economizer(params)` assumes that controller
+and returns the **nominal setting for sizing**. For the 600 W / 80 °C design:
+
+| quantity | value |
+| --- | --- |
+| heat to reject | ~250 W (≈ scales with fan power, not insulation) |
+| economizer effectiveness | 0.85 → **0.73** (~14 % bypass) |
+| feed pre-heat | 74.6 → 66.9 °C |
+| clean-output exit temp | ~37 °C (warmer, carries the surplus out) |
+
+The reject duty and bypass track the fan power (≈3 % bypass at 300 W, ~22 % at
+900 W) and are essentially independent of insulation — confirming the surplus is
+fan-work driven, not loss driven.
+
 ### What binds — sensitivity analysis
 
 `flow_sensitivity` returns the elasticity of budget-constrained flow to each
@@ -427,7 +450,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite (86 tests) covers property correlations against reference steam-table
+The suite (90 tests) covers property correlations against reference steam-table
 values and model invariants for **both** models: mass balance, energy-balance
 closure, `Q = ṁ·h_fg`, series-resistance bounds on `U`, the lift-budget
 partition, that the evaporative model never beats the heat limit and **reduces
@@ -487,7 +510,7 @@ examples/
 scripts/
   sweep_lift.py   matplotlib trade-off plot (optional dep)
   ncg_sensitivity.py  NCG purge trade-off plot (optional dep)
-tests/            pytest suite (86 tests)
+tests/            pytest suite (90 tests)
 ```
 
 ## License
