@@ -84,9 +84,13 @@ class Results:
 
 
 def overall_U(p: DesignParameters) -> float:
-    """Overall heat-transfer coefficient of the shared wall, W/(m^2 K).
+    """Overall heat-transfer coefficient of the heat path, W/(m^2 K).
 
     Series resistances: boiling film, fouling, wall conduction, condensing film.
+    If a lateral conduction link is configured (side-by-side tanks), its per-area
+    resistance ``length / (k * area_ratio)`` is added in series -- this is the
+    term that dominates when the heat must travel *along* a mesh/bar instead of
+    straight through a thin plate.
     """
     resistance = (
         1.0 / p.boiling_htc
@@ -94,7 +98,24 @@ def overall_U(p: DesignParameters) -> float:
         + p.wall_thickness / p.wall_conductivity
         + 1.0 / p.condensing_htc
     )
+    if p.conduction_link_length_m > 0.0:
+        k = p.conduction_link_conductivity or p.wall_conductivity
+        resistance += p.conduction_link_length_m / (k * p.conduction_link_area_ratio)
     return 1.0 / resistance
+
+
+def link_cross_section_for_duty(duty_w: float, length_m: float, conductivity: float,
+                                delta_T_K: float) -> float:
+    """Metal cross-section (m^2) to conduct ``duty_w`` laterally over ``length_m``
+    with a temperature drop of ``delta_T_K``: ``A = Q L / (k dT)``.
+
+    For side-by-side tanks linked by a mesh/bar.  The result is the *solid* metal
+    cross-section; a mesh of metal fraction ``phi`` needs frontal area
+    ``A / phi``.  Because the duty is large and ``dT`` comes out of the useful
+    lift budget, this cross-section is the binding constraint on the side-by-side
+    topology -- unlike the shared plate, where the wall term is negligible.
+    """
+    return duty_w * length_m / (conductivity * delta_T_K)
 
 
 def _compression_work_specific(p: DesignParameters,

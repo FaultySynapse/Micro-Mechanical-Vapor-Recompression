@@ -12,7 +12,14 @@ Public API::
 from __future__ import annotations
 
 from .parameters import DesignParameters
-from .model import Results, overall_U, report, solve, stream_metrics
+from .model import (
+    Results,
+    overall_U,
+    link_cross_section_for_duty,
+    report,
+    solve,
+    stream_metrics,
+)
 from .optimize import (
     maximize_flow,
     solve_at_budget,
@@ -41,6 +48,7 @@ from . import properties
 from . import transport
 from . import ncg
 from . import fan
+from . import packing
 
 __all__ = [
     "DesignParameters",
@@ -49,6 +57,7 @@ __all__ = [
     "solve",
     "report",
     "overall_U",
+    "link_cross_section_for_duty",
     "stream_metrics",
     # evaporative / mass-transfer-limited model
     "EvaporativeResults",
@@ -76,6 +85,7 @@ __all__ = [
     "transport",
     "ncg",
     "fan",
+    "packing",
 ]
 
 __version__ = "0.1.0"

@@ -63,6 +63,22 @@ class DesignParameters:
     #: Additional fouling/scale resistance on the boiling side, m^2 K/W.
     fouling_resistance: float = 0.0001
 
+    # --- Lateral conduction link (side-by-side tanks) ------------------------
+    # The default topology is a shared plate: heat crosses PERPENDICULAR through a
+    # sub-mm wall over the full area, so the wall resistance is tiny.  An
+    # alternative is two shallow tanks *side by side*, thermally linked by a metal
+    # mesh/bar that conducts LATERALLY over a gap -- a long, narrow path whose
+    # resistance can dominate.  Set ``conduction_link_length_m`` > 0 to add that
+    # path in series with the films.  Its per-area resistance is
+    # ``length / (k * area_ratio)`` where ``area_ratio`` = conduction
+    # cross-section / interfacial area (the "metal fraction" of the footprint).
+    #: Lateral conduction length between side-by-side tanks, m (0 = shared plate).
+    conduction_link_length_m: float = 0.0
+    #: Conduction cross-section / interfacial area for the lateral link (0-1+).
+    conduction_link_area_ratio: float = 1.0
+    #: Conductivity of the lateral link, W/(m K) (0 => use ``wall_conductivity``).
+    conduction_link_conductivity: float = 0.0
+
     # --- Evaporation / condensation surfaces (mass-transfer model) -----------
     # Used only by the evaporative (sub-boiling, fan-swept) model. In that
     # regime water evaporates from a free surface and condenses through the
@@ -177,6 +193,9 @@ class DesignParameters:
             "wall_thickness": self.wall_thickness > 0,
             "wall_conductivity": self.wall_conductivity > 0,
             "fouling_resistance": self.fouling_resistance >= 0,
+            "conduction_link_length_m": self.conduction_link_length_m >= 0,
+            "conduction_link_area_ratio": self.conduction_link_area_ratio > 0,
+            "conduction_link_conductivity": self.conduction_link_conductivity >= 0,
             "insulation_ua": self.insulation_ua >= 0,
             "boiling_point_elevation": self.boiling_point_elevation >= 0,
             "evap_area": self.evap_area > 0,
