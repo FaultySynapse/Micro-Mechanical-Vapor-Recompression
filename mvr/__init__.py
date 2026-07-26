@@ -49,6 +49,7 @@ from . import transport
 from . import ncg
 from . import fan
 from . import packing
+from . import geometry
 
 __all__ = [
     "DesignParameters",
@@ -86,6 +87,7 @@ __all__ = [
     "ncg",
     "fan",
     "packing",
+    "geometry",
 ]
 
 __version__ = "0.1.0"
