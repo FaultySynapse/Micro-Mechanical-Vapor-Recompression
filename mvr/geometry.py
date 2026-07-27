@@ -85,6 +85,62 @@ class ConcentricCylinder:
         return (sump + film) * 1000.0
 
 
+@dataclass
+class TubeBundle:
+    """A vertical falling-film tube bundle sized to fit inside a hull.
+
+    Each tube is a single-wall heat-transfer surface: feed evaporates as a film
+    on the inside, compressed vapor condenses on the outside (shell side).  The
+    bundle packs the wall area into a short, wide envelope -- the shape a
+    pressure-cooker hull imposes.
+    """
+
+    tube_inner_diameter_m: float
+    tube_count: int
+    active_length_m: float
+    tube_wall_m: float = 0.0008
+    pitch_ratio: float = 1.35        # center spacing / tube OD (bundle tightness)
+
+    def tube_outer_diameter(self) -> float:
+        return self.tube_inner_diameter_m + 2.0 * self.tube_wall_m
+
+    def heat_transfer_area(self) -> float:
+        """Total film-side (inner) wall area, m^2."""
+        return self.tube_count * math.pi * self.tube_inner_diameter_m * self.active_length_m
+
+    def wetted_perimeter(self) -> float:
+        """Total falling-film wetted width (inner circumferences), m."""
+        return self.tube_count * math.pi * self.tube_inner_diameter_m
+
+    def bundle_envelope_diameter(self) -> float:
+        """Approximate circle (m) enclosing the hex-packed bundle."""
+        pitch = self.pitch_ratio * self.tube_outer_diameter()
+        footprint = self.tube_count * (math.sqrt(3.0) / 2.0) * pitch ** 2
+        return math.sqrt(4.0 * footprint / math.pi)
+
+    def fits_in_shell(self, shell_inner_diameter_m: float) -> bool:
+        return self.bundle_envelope_diameter() <= shell_inner_diameter_m
+
+    def metal_fraction(self, shell_inner_diameter_m: float) -> float:
+        """Fraction of the shell cross-section occupied by tube metal+bore."""
+        tube_area = self.tube_count * math.pi * (self.tube_outer_diameter() / 2.0) ** 2
+        return tube_area / (math.pi * (shell_inner_diameter_m / 2.0) ** 2)
+
+
+def size_tube_count(target_area_m2: float, tube_inner_diameter_m: float,
+                    active_length_m: float) -> int:
+    """Number of tubes to reach ``target_area_m2`` of film-side wall."""
+    per_tube = math.pi * tube_inner_diameter_m * active_length_m
+    return max(1, math.ceil(target_area_m2 / per_tube))
+
+
+def apply_bundle(base: DesignParameters, bundle: TubeBundle) -> DesignParameters:
+    """Set the solver's wall/phase-change areas from a tube bundle."""
+    a = bundle.heat_transfer_area()
+    return replace(base, hx_area=a, evap_area=a, condenser_area=a,
+                   wall_thickness=bundle.tube_wall_m)
+
+
 def hoop_thickness(pressure_pa: float, radius_m: float,
                    allowable_stress_pa: float = 100e6,
                    joint_efficiency: float = JOINT_EFFICIENCY) -> float:
