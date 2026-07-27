@@ -51,6 +51,7 @@ from . import fan
 from . import packing
 from . import geometry
 from . import film
+from . import hull_cost
 
 __all__ = [
     "DesignParameters",
@@ -90,6 +91,7 @@ __all__ = [
     "packing",
     "geometry",
     "film",
+    "hull_cost",
 ]
 
 __version__ = "0.1.0"
