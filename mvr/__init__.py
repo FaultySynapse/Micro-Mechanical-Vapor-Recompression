@@ -50,6 +50,7 @@ from . import ncg
 from . import fan
 from . import packing
 from . import geometry
+from . import film
 
 __all__ = [
     "DesignParameters",
@@ -88,6 +89,7 @@ __all__ = [
     "fan",
     "packing",
     "geometry",
+    "film",
 ]
 
 __version__ = "0.1.0"
